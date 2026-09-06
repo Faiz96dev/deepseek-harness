@@ -1,0 +1,33 @@
+# Private Web layer for self-update. Apply after dsh-web-app so the browser
+# mounts the Update button alongside the shipped sidebar footer, and the Host
+# Remote registers over the composed subprocess/session services.
+
+- insert:
+    - id: self-update
+      name: '@deepseek-ai/dsh-experimental-self-update'
+      config:
+        repoRoot: /Users/faizmamutov/Documents/GitHub/SELF_PROJECTS/deepseek-harness
+        remoteName: upstream
+        branch: master
+        overlayRef: self-update-plugin
+        overlayPaths:
+          - packages/experimental/self-update
+          - packages/experimental/client-ui-self-update
+          - packages/experimental/self-update-web-profile
+          - .agents/notes/implemented/feature/2026-08-29-web-self-update-button.md
+          - .agents/notes/implemented/architecture/2026-09-06-self-update-reset-and-overlay.md
+        installArgv: [pnpm, install]
+        buildArgv: [node, packages/experimental/self-update-web-profile/overlay/build.mjs]
+        verifyArgv: [node, apps/cli/lib/bin.js, --profile, web, --dump-config]
+        extraPathDirs: [/Users/faizmamutov/.local/bin]
+        backupRoot: /Users/faizmamutov/.dsh/backups
+        keepBackups: 5
+        sessionsDir: /Users/faizmamutov/.dsh/sessions
+        storagesDir: /Users/faizmamutov/.dsh/storages
+        attachmentsDir: /Users/faizmamutov/.dsh/attachments
+        graceMs: 5000
+        maxLogLines: 2000
+        logDir: /Users/faizmamutov/.dsh/self-update/logs
+
+    - id: ui-self-update
+      name: '@deepseek-ai/dsh-experimental-client-ui-self-update'
