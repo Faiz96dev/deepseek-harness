@@ -52,11 +52,17 @@ export class SelfUpdateGit {
    * @param onLine - sink for fetch progress.
    */
   async fetch(onLine: (line: SelfUpdateLogLine) => void): Promise<void> {
+    const lines: string[] = []
     const outcome = await runStreaming(
-      this.ctx, this.config, ['git', 'fetch', this.config.remoteName, this.config.branch], 'fetching', onLine,
+      this.ctx, this.config, ['git', 'fetch', this.config.remoteName, this.config.branch], 'fetching',
+      (line) => { lines.push(line.text); onLine(line) },
     )
     if (outcome.exitCode !== 0) {
-      throw new Error(`git fetch ${this.config.remoteName} ${this.config.branch} exited ${String(outcome.exitCode)}`)
+      // git's own diagnostic (a network timeout, a rate limit, DNS failure,
+      // an unknown remote branch) is the actionable part; the exit code alone
+      // does not distinguish any of those from each other.
+      const detail = lines.length > 0 ? `: ${lines.join(' ')}` : ''
+      throw new Error(`git fetch ${this.config.remoteName} ${this.config.branch} exited ${String(outcome.exitCode)}${detail}`)
     }
   }
 

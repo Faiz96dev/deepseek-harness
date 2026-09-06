@@ -1,4 +1,5 @@
-import { access, rm, writeFile } from 'node:fs/promises'
+import { access, chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { SelfUpdateGit } from '../src/git.ts'
@@ -175,7 +176,32 @@ describe('SelfUpdateGit against a real repository', () => {
     const gitOps = new SelfUpdateGit(harness.ctx, config)
 
     const { onLine } = collectingSink()
-    await expect(gitOps.fetch(onLine)).rejects.toThrow(/git fetch/)
+    // Real git's own diagnostic (not just the exit code) must reach the
+    // thrown message, so a caller sees why the fetch failed, not just that it did.
+    await expect(gitOps.fetch(onLine)).rejects.toThrow(/git fetch upstream no-such-branch exited \d+: .*couldn't find remote ref/i)
+  })
+
+  it('omits the colon-prefixed detail when the failed fetch produces no output at all', async () => {
+    repo = await createRepoFixture()
+    harness = await setupJobHarness()
+    // A real `git fetch` always prints a diagnostic on failure; a fake `git`
+    // that exits 1 silently is the only way to force the no-output case.
+    const binDir = await mkdtemp(join(tmpdir(), 'dsh-self-update-fakebin-'))
+    const fakeGit = join(binDir, 'git')
+    await writeFile(fakeGit, '#!/bin/sh\nexit 1\n', 'utf8')
+    await chmod(fakeGit, 0o755)
+    const config = testConfig({
+      repoRoot: repo.repoRoot, backupRoot: '', sessionsDir: '', storagesDir: '', attachmentsDir: '', logDir: '',
+      extraPathDirs: [binDir],
+    })
+    const gitOps = new SelfUpdateGit(harness.ctx, config)
+
+    const { onLine } = collectingSink()
+    try {
+      await expect(gitOps.fetch(onLine)).rejects.toThrow(/^git fetch upstream master exited 1$/)
+    } finally {
+      await rm(binDir, { recursive: true, force: true })
+    }
   })
 
   it('throws when revCounts reads a remote branch name that does not exist', async () => {

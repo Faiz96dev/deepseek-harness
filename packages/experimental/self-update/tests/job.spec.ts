@@ -291,6 +291,28 @@ describe('SelfUpdateJob', () => {
     expect(job.snapshot.failure).toMatchObject({ code: 'merge-unrecoverable', message: 'not an Error instance' })
   })
 
+  it('wraps a bare error from preflight itself (not one of its own business checks) as merge-unrecoverable', async () => {
+    const ctx = await setup()
+    const appExit = vi.fn()
+    const config = testConfigFor(ctx.repo, ctx.backupBase)
+    // isDirty()/appExit are the only checks preflight throws its own
+    // SelfUpdateBusinessError for; currentHead() failing is the one bare,
+    // unwrapped throw preflight can still surface, exercising toFailure's
+    // last-resort branch for a throw that reached it unwrapped.
+    const throwingGit: SelfUpdateGit = new Proxy(ctx.git, {
+      get(target, prop, receiver): unknown {
+        if (prop === 'currentHead') return async () => { throw new Error('git log failed') }
+        return Reflect.get(target, prop, receiver)
+      },
+    })
+    const job = SelfUpdateJob.start({ ctx: ctx.harness.ctx, git: throwingGit, config, appExit })
+
+    await drain(job)
+    expect(job.snapshot.outcome).toBe('failed')
+    expect(job.snapshot.failure).toEqual({ code: 'merge-unrecoverable', message: 'git log failed' })
+    expect(appExit).not.toHaveBeenCalled()
+  })
+
   it('reports fetch-failed when the configured branch does not exist upstream', async () => {
     const ctx = await setup()
     const appExit = vi.fn()

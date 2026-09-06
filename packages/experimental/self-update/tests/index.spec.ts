@@ -162,6 +162,8 @@ describe('SelfUpdateService.start', () => {
 
     const started = await ctx.service.start({ acknowledgeActiveSessions: true })
     expect(started.ok).toBe(true)
+    // Let the job settle before teardown removes the fixture it is still logging into.
+    await vi.waitFor(() => { expect(ctx.appExit).toHaveBeenCalled() })
   })
 
   it('refuses a second start while a job is still running, but accepts one once the first has finished', async () => {
@@ -178,6 +180,9 @@ describe('SelfUpdateService.start', () => {
     await addUpstreamCommit(ctx.repo.upstreamRoot, 'third commit')
     const third = await ctx.service.start({})
     expect(third.ok).toBe(true)
+    // Let the third job settle (and stop writing its log file) before
+    // afterEach removes the fixture directory that file lives in.
+    await vi.waitFor(() => { expect(ctx.appExit).toHaveBeenCalledTimes(2) })
   })
 
   it('flushes every live Session before starting a job', async () => {
