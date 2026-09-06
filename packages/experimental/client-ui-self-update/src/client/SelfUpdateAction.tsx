@@ -5,7 +5,7 @@ import type { SelfUpdateActionProps } from './slots.ts'
 import css from './SelfUpdateAction.module.css'
 
 const PHASES: readonly SelfUpdatePhase[] = [
-  'preflight', 'fetching', 'backing-up', 'merging', 'installing', 'building', 'verifying', 'restarting',
+  'preflight', 'fetching', 'backing-up', 'resetting', 'overlaying', 'installing', 'building', 'verifying', 'committing', 'restarting',
 ]
 
 function dotState(hasActiveJob: boolean, failed: boolean, behind: number): StateDotState {
@@ -21,11 +21,16 @@ function isFailedOutcome(outcome: SelfUpdateJobSnapshot['outcome']): boolean {
 /**
  * Sidebar footer entry point for checking and running a self-update. Renders
  * a small badge reflecting repository/job state, and a popover panel with
- * status, Check/Update controls, live progress, and a restart banner.
+ * status, Check/Update controls, live progress, and a restart banner. A
+ * single "Update" click starts the job immediately — no separate
+ * confirmation step — and the panel stays open and un-dismissable by an
+ * outside click for as long as a job is running, so its live progress is
+ * never lost behind an accidental close; it also opens on its own the
+ * moment a job becomes active, even one started from elsewhere.
  * @param props - runtime slot currency (`wide`), the injected business face, and the namespace translator.
  * @returns the trigger button and its popover panel.
  */
-export function SelfUpdateAction({ wide, useUpdate, ensure, refresh, check, start, onReconnect, t }: SelfUpdateActionProps) {
+export function SelfUpdateAction({ wide, useUpdate, ensure, check, start, onReconnect, t }: SelfUpdateActionProps) {
   const restarting = useUpdate(view => view.restarting)
   const repository = useUpdate(view => view.repository)
   const job = useUpdate(view => view.job)
@@ -34,15 +39,26 @@ export function SelfUpdateAction({ wide, useUpdate, ensure, refresh, check, star
   const refusal = useUpdate(view => view.refusal)
 
   const [open, setOpen] = useState(false)
-  const [confirming, setConfirming] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const logRef = useRef<HTMLDivElement>(null)
 
-  useDismissOnOutsidePointer(rootRef, open, setOpen)
+  const jobActive = job !== null && job.finishedAt === null
+  const failed = job !== null && isFailedOutcome(job.outcome)
+  const behind = repository?.behind ?? 0
+  const badgeState = dotState(jobActive, failed, behind)
+
+  useDismissOnOutsidePointer(rootRef, open && !jobActive, setOpen)
 
   useEffect(() => {
     if (open) void ensure()
   }, [open, ensure])
+
+  // A job can become active from elsewhere (another tab, a stale click
+  // retried by the Host) — the panel opens on its own rather than leaving
+  // live progress unseen behind a closed trigger.
+  useEffect(() => {
+    if (jobActive) setOpen(true)
+  }, [jobActive])
 
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight })
@@ -52,20 +68,10 @@ export function SelfUpdateAction({ wide, useUpdate, ensure, refresh, check, star
     if (restarting) window.location.reload()
   }), [onReconnect, restarting])
 
-  const jobActive = job !== null && job.finishedAt === null
-  const failed = job !== null && isFailedOutcome(job.outcome)
-  const behind = repository?.behind ?? 0
-  const badgeState = dotState(jobActive, failed, behind)
-
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
-    if (event.key !== 'Escape' || !open) return
+    if (event.key !== 'Escape' || !open || jobActive) return
     event.preventDefault()
     setOpen(false)
-  }
-
-  const runStart = (acknowledgeActiveSessions?: boolean): void => {
-    setConfirming(false)
-    void start(acknowledgeActiveSessions === undefined ? {} : { acknowledgeActiveSessions })
   }
 
   return (
@@ -96,44 +102,13 @@ export function SelfUpdateAction({ wide, useUpdate, ensure, refresh, check, star
                         <button type="button" className={css.actionButton} onClick={() => { void check() }}>
                           {t('check')}
                         </button>
-                        {confirming
-                          ? (
-                            <>
-                              <button type="button" className={css.actionButtonPrimary} onClick={() => { runStart() }}>
-                                {t('confirm')}
-                              </button>
-                              <button type="button" className={css.actionButton} onClick={() => { setConfirming(false) }}>
-                                {t('cancel')}
-                              </button>
-                            </>
-                          )
-                          : (
-                            <button
-                              type="button"
-                              className={css.actionButtonPrimary}
-                              onClick={() => {
-                                // The active-Session warning below must reflect now, not panel-open time.
-                                void refresh()
-                                setConfirming(true)
-                              }}
-                            >
-                              {t('update')}
-                            </button>
-                          )}
+                        <button type="button" className={css.actionButtonPrimary} onClick={() => { void start() }}>
+                          {t('update')}
+                        </button>
                       </div>
                     )}
                   {refusal !== null ? <div className={css.failure}>{t(`failure.${refusal}`)}</div> : null}
                   {error !== null ? <div className={css.failure}>{t('error', { message: error })}</div> : null}
-                  {confirming && repository !== null && repository.activeSessions > 0
-                    ? (
-                      <div className={css.warning}>
-                        {t('activeSessionsWarning', { count: repository.activeSessions })}
-                        <button type="button" className={css.actionButton} onClick={() => { runStart(true) }}>
-                          {t('updateAnyway')}
-                        </button>
-                      </div>
-                    )
-                    : null}
                   {job !== null && job.failure !== null
                     ? <FailureLine failure={job.failure} t={t} />
                     : null}
@@ -191,5 +166,8 @@ function PhaseList({ phase, t }: { phase: SelfUpdatePhase; t: SelfUpdateActionPr
 }
 
 function FailureLine({ failure, t }: { failure: SelfUpdateFailure; t: SelfUpdateActionProps['t'] }) {
+  if (failure.code === 'overlay-ref-missing') {
+    return <div className={css.failure}>{t('failure.overlay-ref-missing', { ref: failure.ref })}</div>
+  }
   return <div className={css.failure}>{t(`failure.${failure.code}`)}</div>
 }

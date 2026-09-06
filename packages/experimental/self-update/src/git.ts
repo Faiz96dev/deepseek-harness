@@ -31,8 +31,8 @@ export class SelfUpdateGit {
 
   /**
    * Whether the working tree carries uncommitted changes.
-   * Untracked files count as dirty: an update that merges over them could
-   * silently combine unrelated local work with upstream history.
+   * Untracked files count as dirty: an update that reset over them would
+   * silently discard unrelated local work.
    */
   async isDirty(): Promise<boolean> {
     const { text } = await runCollecting(this.ctx, this.config, ['git', 'status', '--porcelain'], 'preflight', () => {})
@@ -98,42 +98,56 @@ export class SelfUpdateGit {
   }
 
   /**
-   * Merge the configured remote branch into the current branch.
-   * A fast-forward-eligible merge never writes `MERGE_HEAD`, so a non-zero
-   * exit there (a transient failure, not a conflict) leaves no merge for
-   * `--abort` to cancel; this checks for `MERGE_HEAD` first and only invokes
-   * `--abort` when a real conflicted merge is in progress, so the repository
-   * never lingers in a conflicted state after this call returns.
-   * @param onLine - sink for merge progress.
-   * @returns `'merged'` on success; `'conflict'` after an aborted conflicted
-   * merge; `'failed'` when `git merge` itself exited non-zero without ever
-   * starting a merge (the working tree is unchanged either way).
+   * Whether `ref` resolves to a real commit in this checkout.
+   * @param ref - the git ref to check.
    */
-  async merge(onLine: (line: SelfUpdateLogLine) => void): Promise<'merged' | 'conflict' | 'failed'> {
-    const remoteRef = `${this.config.remoteName}/${this.config.branch}`
-    const outcome = await runStreaming(this.ctx, this.config, ['git', 'merge', '--no-edit', remoteRef], 'merging', onLine)
-    if (outcome.exitCode === 0) return 'merged'
-    const mergeHead = await runStreaming(
-      this.ctx, this.config, ['git', 'rev-parse', '-q', '--verify', 'MERGE_HEAD'], 'merging', () => {},
+  async refExists(ref: string): Promise<boolean> {
+    const outcome = await runStreaming(
+      this.ctx, this.config, ['git', 'rev-parse', '-q', '--verify', `${ref}^{commit}`], 'preflight', () => {},
     )
-    if (mergeHead.exitCode !== 0) return 'failed'
-    const abort = await runStreaming(this.ctx, this.config, ['git', 'merge', '--abort'], 'merging', onLine)
-    if (abort.exitCode !== 0) {
-      throw new Error(`self-update: git merge --abort exited ${String(abort.exitCode)} after a failed merge; the repository may still be conflicted`)
-    }
-    return 'conflict'
+    return outcome.exitCode === 0
   }
 
   /**
-   * Hard-reset the working tree to `sha`. Only ever called against
-   * `preUpdateHead`, so this cannot discard commits the merge itself did not
-   * introduce.
+   * Hard-reset the working tree to `sha`, discarding every commit and
+   * uncommitted change since. Preflight already required a clean tree, and
+   * every phase after this restores this deployment's own paths from
+   * `overlayRef` before installing, so this is always immediately followed
+   * by {@link restorePaths} for the same job.
    * @param sha - commit to reset to.
    * @param onLine - sink for reset progress.
    */
   async resetHard(sha: string, onLine: (line: SelfUpdateLogLine) => void): Promise<void> {
-    const outcome = await runStreaming(this.ctx, this.config, ['git', 'reset', '--hard', sha], 'merging', onLine)
+    const outcome = await runStreaming(this.ctx, this.config, ['git', 'reset', '--hard', sha], 'resetting', onLine)
     if (outcome.exitCode !== 0) throw new Error(`git reset --hard ${sha} exited ${String(outcome.exitCode)}`)
+  }
+
+  /**
+   * Restore `paths` from `ref`'s tree onto the working tree and index,
+   * layering this deployment's own files over the just-reset upstream tree.
+   * @param ref - git ref (typically `config.overlayRef`) to restore paths from.
+   * @param paths - paths (relative to `repoRoot`) to restore.
+   * @param onLine - sink for checkout progress.
+   */
+  async restorePaths(ref: string, paths: readonly string[], onLine: (line: SelfUpdateLogLine) => void): Promise<void> {
+    const outcome = await runStreaming(this.ctx, this.config, ['git', 'checkout', ref, '--', ...paths], 'overlaying', onLine)
+    if (outcome.exitCode !== 0) throw new Error(`git checkout ${ref} -- ${paths.join(' ')} exited ${String(outcome.exitCode)}`)
+  }
+
+  /**
+   * Stage every working-tree change and commit it, bypassing hooks: the
+   * overlay's own paths are already reviewed source (restored verbatim from
+   * `overlayRef`), not new work a commit hook needs to gate.
+   * @param message - commit message.
+   * @param onLine - sink for git's own progress output.
+   */
+  async commitAll(message: string, onLine: (line: SelfUpdateLogLine) => void): Promise<void> {
+    const add = await runStreaming(this.ctx, this.config, ['git', 'add', '-A'], 'committing', onLine)
+    if (add.exitCode !== 0) throw new Error(`git add -A exited ${String(add.exitCode)}`)
+    const commit = await runStreaming(
+      this.ctx, this.config, ['git', 'commit', '--no-verify', '-m', message], 'committing', onLine,
+    )
+    if (commit.exitCode !== 0) throw new Error(`git commit exited ${String(commit.exitCode)}`)
   }
 }
 

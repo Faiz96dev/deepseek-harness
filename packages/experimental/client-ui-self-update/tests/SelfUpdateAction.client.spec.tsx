@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 /**
  * SelfUpdateAction rendering and gestures: the badge reflects repository/job
- * state, the panel shows status/Check/Update controls, confirmation and the
- * active-Sessions warning gate a start, phase/log progress render while a job
- * runs, and a restart banner appears once the job reaches its restart phase.
+ * state, the panel shows status and Check/Update controls (a single Update
+ * click starts a job with no confirmation step), phase/log progress render
+ * while a job runs, the panel is un-dismissable and opens on its own while a
+ * job is active, and a restart banner appears once the job reaches its
+ * restart phase.
  */
 import { useSyncExternalStore } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -28,7 +30,6 @@ const REPO: SelfUpdateStatusValue = {
   behind: null,
   ahead: 0,
   dirty: false,
-  activeSessions: 0,
   job: null,
   lastRun: null,
 }
@@ -45,7 +46,12 @@ const JOB: SelfUpdateJobSnapshot = {
   backupPath: null,
 }
 
-/** Render the panel over a fixed view and recording verbs. */
+/**
+ * Render the panel over a reactive view: `setView` mutates it and notifies
+ * subscribers, mirroring the real controller's publish/subscribe mechanism
+ * closely enough to exercise a transition (e.g. a job becoming active) with
+ * a real re-render, not just a frozen snapshot.
+ */
 function mount(options: {
   view?: Partial<SelfUpdateView>
   ensureResult?: SelfUpdateActionResult
@@ -53,7 +59,7 @@ function mount(options: {
   startResult?: SelfUpdateActionResult
   wide?: boolean
 } = {}) {
-  const view: SelfUpdateView = {
+  let view: SelfUpdateView = {
     status: 'ready',
     repository: REPO,
     job: null,
@@ -63,8 +69,8 @@ function mount(options: {
     refusal: null,
     ...options.view,
   }
+  const listeners = new Set<() => void>()
   const ensure = vi.fn(() => Promise.resolve<SelfUpdateActionResult>(options.ensureResult ?? { ok: true }))
-  const refresh = vi.fn(() => Promise.resolve<SelfUpdateActionResult>({ ok: true }))
   const check = vi.fn(() => Promise.resolve<SelfUpdateActionResult>(options.checkResult ?? { ok: true }))
   const start = vi.fn(() => Promise.resolve<SelfUpdateActionResult>(options.startResult ?? { ok: true }))
   const reconnectListeners = new Set<() => void>()
@@ -73,17 +79,25 @@ function mount(options: {
     return () => { reconnectListeners.delete(listener) }
   })
   const useUpdate = (<T,>(select: (v: SelfUpdateView) => T): T =>
-    useSyncExternalStore(() => () => {}, () => select(view))) as never
+    useSyncExternalStore(
+      (onStoreChange) => { listeners.add(onStoreChange); return () => { listeners.delete(onStoreChange) } },
+      () => select(view),
+    )) as never
   const props = {
-    wide: options.wide ?? true, useUpdate, ensure, refresh, check, start, onReconnect, t,
+    wide: options.wide ?? true, useUpdate, ensure, check, start, onReconnect, t,
   } as unknown as Parameters<typeof SelfUpdateAction>[0]
   const rendered = render(<SelfUpdateAction {...props} />)
   return {
     ...rendered,
     ensure,
-    refresh,
     check,
     start,
+    setView: (patch: Partial<SelfUpdateView>) => {
+      act(() => {
+        view = { ...view, ...patch }
+        for (const listener of listeners) listener()
+      })
+    },
     fireReconnect: () => { for (const listener of reconnectListeners) listener() },
     // The trigger button's own accessible name duplicates panel copy (both
     // read "更新"), so panel-scoped controls must be queried within the
@@ -149,39 +163,17 @@ describe('SelfUpdateAction', () => {
     expect(ui.check).toHaveBeenCalledOnce()
   })
 
-  it('requires confirmation before starting, then starts with no acknowledgement when no Sessions are active', () => {
+  it('starts immediately on an Update click, with no confirmation step', () => {
     const ui = mount()
     fireEvent.click(ui.getByLabelText(zh.trigger))
     fireEvent.click(ui.panel().getByRole('button', { name: zh.update }))
-    // Entering confirmation re-reads status so the active-Session warning is current.
-    expect(ui.refresh).toHaveBeenCalledOnce()
-    expect(ui.start).not.toHaveBeenCalled()
-    fireEvent.click(ui.panel().getByRole('button', { name: zh.confirm }))
-    expect(ui.start).toHaveBeenCalledWith({})
-  })
-
-  it('cancels the confirmation step without starting', () => {
-    const ui = mount()
-    fireEvent.click(ui.getByLabelText(zh.trigger))
-    fireEvent.click(ui.panel().getByRole('button', { name: zh.update }))
-    fireEvent.click(ui.panel().getByRole('button', { name: zh.cancel }))
-    expect(ui.panel().queryByRole('button', { name: zh.confirm })).toBeNull()
-    expect(ui.panel().getByRole('button', { name: zh.update })).toBeTruthy()
-    expect(ui.start).not.toHaveBeenCalled()
-  })
-
-  it('warns about active Sessions while confirming, and starts with acknowledgement', () => {
-    const ui = mount({ view: { repository: { ...REPO, activeSessions: 2 } } })
-    fireEvent.click(ui.getByLabelText(zh.trigger))
-    fireEvent.click(ui.panel().getByRole('button', { name: zh.update }))
-    expect(ui.getByText('有 2 个会话正在进行，更新将中断其当前回复（下次打开时会自动标记为已中断，不会丢失记录）。')).toBeTruthy()
-    fireEvent.click(ui.panel().getByRole('button', { name: zh.updateAnyway }))
-    expect(ui.start).toHaveBeenCalledWith({ acknowledgeActiveSessions: true })
+    expect(ui.start).toHaveBeenCalledOnce()
   })
 
   it('renders the phase list while a job is active, in place of the Check/Update controls', () => {
+    // An active job opens the panel on its own; a click on an already-open
+    // trigger would toggle it closed instead.
     const ui = mount({ view: { job: { ...JOB, phase: 'building' } } })
-    fireEvent.click(ui.getByLabelText(zh.trigger))
     expect(ui.panel().queryByRole('button', { name: zh.check })).toBeNull()
     expect(ui.panel().queryByRole('button', { name: zh.update })).toBeNull()
     expect(ui.getByText(zh['phase.building'])).toBeTruthy()
@@ -194,15 +186,14 @@ describe('SelfUpdateAction', () => {
       { seq: 1, phase: 'fetching', stream: 'stderr', text: 'a warning', at: 1 },
     ]
     const ui = mount({ view: { job: JOB, log } })
-    fireEvent.click(ui.getByLabelText(zh.trigger))
     expect(ui.getByText('fetching upstream')).toBeTruthy()
     expect(ui.getByText('a warning')).toBeTruthy()
   })
 
   it('names a refused start in the panel instead of appearing to do nothing', () => {
-    const ui = mount({ view: { refusal: 'active-sessions-need-acknowledgement' } })
+    const ui = mount({ view: { refusal: 'job-already-running' } })
     fireEvent.click(ui.getByLabelText(zh.trigger))
-    expect(ui.getByText(zh['failure.active-sessions-need-acknowledgement'])).toBeTruthy()
+    expect(ui.getByText(zh['failure.job-already-running'])).toBeTruthy()
   })
 
   it('shows a transport or Host error message in the panel', () => {
@@ -213,11 +204,20 @@ describe('SelfUpdateAction', () => {
 
   it('shows the failure line once a job settles with a failure', () => {
     const failedJob: SelfUpdateJobSnapshot = {
-      ...JOB, finishedAt: 1, outcome: 'failed', failure: { code: 'merge-conflict', message: 'conflict' },
+      ...JOB, finishedAt: 1, outcome: 'failed', failure: { code: 'overlay-failed', message: 'checkout failed' },
     }
     const ui = mount({ view: { job: failedJob } })
     fireEvent.click(ui.getByLabelText(zh.trigger))
-    expect(ui.getByText(zh['failure.merge-conflict'])).toBeTruthy()
+    expect(ui.getByText(zh['failure.overlay-failed'])).toBeTruthy()
+  })
+
+  it('names the missing overlay ref when a job fails preflight for it', () => {
+    const failedJob: SelfUpdateJobSnapshot = {
+      ...JOB, finishedAt: 1, outcome: 'failed', failure: { code: 'overlay-ref-missing', ref: 'self-update-plugin' },
+    }
+    const ui = mount({ view: { job: failedJob } })
+    fireEvent.click(ui.getByLabelText(zh.trigger))
+    expect(ui.getByText('找不到插件源分支 self-update-plugin')).toBeTruthy()
   })
 
   it('shows the restarting banner instead of ordinary content once restarting', () => {
@@ -249,7 +249,7 @@ describe('SelfUpdateAction', () => {
     }
   })
 
-  it('closes the panel on Escape', () => {
+  it('closes the panel on Escape while idle', () => {
     const ui = mount()
     fireEvent.click(ui.getByLabelText(zh.trigger))
     expect(ui.getByText(zh.panelTitle)).toBeTruthy()
@@ -271,5 +271,31 @@ describe('SelfUpdateAction', () => {
     expect(ui.getByText(zh.panelTitle)).toBeTruthy()
     fireEvent.click(trigger)
     expect(ui.queryByText(zh.panelTitle)).toBeNull()
+  })
+
+  it('ignores Escape while a job is active', () => {
+    const ui = mount({ view: { job: JOB } })
+    fireEvent.keyDown(ui.getByText(zh.panelTitle), { key: 'Escape' })
+    expect(ui.getByText(zh.panelTitle)).toBeTruthy()
+  })
+
+  it('does not dismiss the panel on an outside pointerdown while a job is active', () => {
+    const ui = mount({ view: { job: JOB } })
+    fireEvent.pointerDown(document.body)
+    expect(ui.queryByText(zh.panelTitle)).toBeTruthy()
+  })
+
+  it('dismisses the panel on an outside pointerdown while idle', () => {
+    const ui = mount()
+    fireEvent.click(ui.getByLabelText(zh.trigger))
+    fireEvent.pointerDown(document.body)
+    expect(ui.queryByText(zh.panelTitle)).toBeNull()
+  })
+
+  it('opens the panel on its own when a job becomes active, even one started elsewhere', () => {
+    const ui = mount()
+    expect(ui.queryByText(zh.panelTitle)).toBeNull()
+    ui.setView({ job: JOB })
+    expect(ui.getByText(zh.panelTitle)).toBeTruthy()
   })
 })

@@ -11,7 +11,6 @@ import type {
   SelfUpdateFollowFrame,
   SelfUpdateJobSnapshot,
   SelfUpdateLogLine,
-  SelfUpdateStartRequest,
   SelfUpdateStartResult,
   SelfUpdateStatusValue,
 } from '@deepseek-ai/dsh-experimental-self-update/types'
@@ -20,7 +19,7 @@ import type {
 export interface SelfUpdateRemote {
   status: () => Promise<RemoteResult<SelfUpdateStatusValue>>
   check: () => Promise<RemoteResult<SelfUpdateStatusValue>>
-  start: (request: SelfUpdateStartRequest) => Promise<RemoteResult<SelfUpdateStartResult>>
+  start: () => Promise<RemoteResult<SelfUpdateStartResult>>
   follow: (signal: AbortSignal) => AsyncIterable<SelfUpdateFollowFrame>
 }
 
@@ -115,12 +114,11 @@ export class SelfUpdateController implements HostObservable<SelfUpdateView> {
   }
 
   /**
-   * Begin one update attempt.
-   * @param request - optional acknowledgement of active Sessions.
+   * Begin one update attempt, with no further confirmation.
    * @returns the settled start result: success opens the live follow stream.
    */
-  async start(request: SelfUpdateStartRequest = {}): Promise<SelfUpdateActionResult> {
-    const carried = await this.remote.start(request)
+  async start(): Promise<SelfUpdateActionResult> {
+    const carried = await this.remote.start()
     if (this.disposed) return OK
     if (!carried.ok) return this.fail(carried.error.message)
     if (!carried.value.ok) {

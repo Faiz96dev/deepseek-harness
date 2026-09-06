@@ -13,7 +13,11 @@ export interface Config {
   readonly remoteName: string
   /** Branch on `remoteName` this checkout tracks. */
   readonly branch: string
-  /** Argv that installs dependencies against the merged tree (`argv[0]` is the executable). */
+  /** Git ref (a local branch) whose tree holds this deployment's own overlay paths, restored from it on every update. */
+  readonly overlayRef: string
+  /** Paths (relative to `repoRoot`) restored from `overlayRef` after resetting onto the fetched upstream head. */
+  overlayPaths: string[]
+  /** Argv that installs dependencies against the reset-and-overlaid tree (`argv[0]` is the executable). */
   installArgv: string[]
   /** Argv that rebuilds every artifact this deployment serves. */
   buildArgv: string[]
@@ -43,6 +47,8 @@ export const Config: s<Config> = s.object({
   repoRoot: s.string().required(),
   remoteName: s.string().required(),
   branch: s.string().required(),
+  overlayRef: s.string().required(),
+  overlayPaths: s.array(s.string()).required(),
   installArgv: s.array(s.string()).required(),
   buildArgv: s.array(s.string()).required(),
   verifyArgv: s.array(s.string()).required(),

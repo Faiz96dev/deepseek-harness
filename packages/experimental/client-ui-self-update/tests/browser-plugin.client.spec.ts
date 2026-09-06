@@ -22,7 +22,6 @@ const STATUS = {
   behind: null,
   ahead: 0,
   dirty: false,
-  activeSessions: 0,
   job: null,
   lastRun: null,
 }
@@ -114,7 +113,6 @@ describe('ui-self-update browser plugin', () => {
 
     const injected = (b.entry()!.inject as unknown as () => SelfUpdateInjected)()
     expect((await injected.ensure()).ok).toBe(true)
-    expect((await injected.refresh()).ok).toBe(true)
     expect((await injected.check()).ok).toBe(true)
     expect((await injected.start()).ok).toBe(true)
     expect(b.calls.map(call => call.method)).toContain('selfUpdate/status')

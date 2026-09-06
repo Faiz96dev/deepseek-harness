@@ -11,7 +11,9 @@ import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import { remoteMethods } from '@deepseek-ai/dsh-typert-protocol'
 import SelfUpdateService from '../src/index.ts'
-import { addUpstreamCommit, createRepoFixture, FIXTURE_VERSION, nodeScript } from './helpers.ts'
+import {
+  addUpstreamCommit, createRepoFixture, FIXTURE_OVERLAY_PATHS, FIXTURE_OVERLAY_REF, FIXTURE_VERSION, nodeScript,
+} from './helpers.ts'
 import type { RepoFixture } from './helpers.ts'
 
 let configRoot: string | undefined
@@ -77,6 +79,8 @@ describe('self-update through a real Loader composition', () => {
       `    repoRoot: ${JSON.stringify(repo.repoRoot)}`,
       '    remoteName: upstream',
       '    branch: master',
+      `    overlayRef: ${JSON.stringify(FIXTURE_OVERLAY_REF)}`,
+      `    overlayPaths: ${JSON.stringify(FIXTURE_OVERLAY_PATHS)}`,
       `    installArgv: ${JSON.stringify(nodeScript('process.exit(0)'))}`,
       `    buildArgv: ${JSON.stringify(nodeScript('process.exit(0)'))}`,
       `    verifyArgv: ${JSON.stringify(nodeScript('process.exit(0)'))}`,
@@ -105,7 +109,7 @@ describe('self-update through a real Loader composition', () => {
 
     await addUpstreamCommit(repo.upstreamRoot, 'second commit')
 
-    const started = await ctx.selfUpdate.start({})
+    const started = await ctx.selfUpdate.start()
     if (!started.ok) throw new Error(`expected start success, got ${started.error.code}`)
 
     const frames: string[] = []
@@ -114,7 +118,9 @@ describe('self-update through a real Loader composition', () => {
       if (frame.type === 'phase') frames.push(frame.phase)
       if (frame.type === 'done') break
     }
-    expect(frames).toContain('merging')
+    expect(frames).toContain('resetting')
+    expect(frames).toContain('overlaying')
+    expect(frames).toContain('committing')
     expect(frames).toContain('restarting')
     expect(exitCode).toBe(0)
     // The service created logDir at load and the job left its durable record there.

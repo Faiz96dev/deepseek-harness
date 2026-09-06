@@ -14,7 +14,6 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 // Type-only: pulls this package's LocaleNamespaceMap merge (the 'self-update' seat).
 import type {} from './locales.ts'
 import type { SelfUpdateActionResult, SelfUpdateView } from './controller.ts'
-import type { SelfUpdateStartRequest } from '@deepseek-ai/dsh-experimental-self-update/types'
 
 /** Injected business face of the sidebar Update entry. */
 export interface SelfUpdateInjected {
@@ -24,15 +23,10 @@ export interface SelfUpdateInjected {
   }
   /** Load status once, on first interaction, and open the live follow stream. */
   ensure: () => Promise<SelfUpdateActionResult>
-  /** Re-read status now, so a confirmation step sees the current active-Session count rather than the one loaded when the panel opened. */
-  refresh: () => Promise<SelfUpdateActionResult>
   /** Fetch upstream, then refresh status against it. */
   check: () => Promise<SelfUpdateActionResult>
-  /**
-   * Begin one update attempt.
-   * @param request - optional acknowledgement of active Sessions.
-   */
-  start: (request?: SelfUpdateStartRequest) => Promise<SelfUpdateActionResult>
+  /** Begin one update attempt, with no further confirmation. */
+  start: () => Promise<SelfUpdateActionResult>
   /** Subscribe to the physical connection re-establishing after the restart. */
   onReconnect: (listener: () => void) => () => void
 }

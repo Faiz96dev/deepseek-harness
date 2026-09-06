@@ -9,7 +9,7 @@ kind: "package-bundle"
 
 ## 概述
 
-`dsh-experimental-self-update-web-profile` 是 [self-update](../self-update/README.zh.md) 的私有 Web 层：一个侧边栏 Update 按钮，可 fetch、合并、重建并重启一个源码 checkout 部署。把它放在 `@deepseek-ai/dsh-web-app` 之后即可一步挂载 Host Remote service 与其浏览器控件。正式发布会排除本包，因此只能从源码 checkout 使用，且其配置是部署特定的（针对这台确切机器的 checkout 与 `$DSH_HOME` 的绝对路径）。
+`dsh-experimental-self-update-web-profile` 是 [self-update](../self-update/README.zh.md) 的私有 Web 层：一个侧边栏 Update 按钮，可 fetch、重置到上游、叠加本部署自己的插件树、重建并重启一个源码 checkout 部署。把它放在 `@deepseek-ai/dsh-web-app` 之后即可一步挂载 Host Remote service 与其浏览器控件。正式发布会排除本包，因此只能从源码 checkout 使用，且其配置是部署特定的（针对这台确切机器的 checkout 与 `$DSH_HOME` 的绝对路径）。
 
 ## 目录
 
@@ -37,7 +37,7 @@ pnpm dsh plugin --profile web add ./packages/experimental/self-update-web-profil
 
 ### 安装前：为本次部署编辑 `cordis.patch.yml`
 
-`self-update` 行 `config` 下的每个字段都是绝对的、部署特定的值：`repoRoot`（本进程运行所在的 git checkout）、`extraPathDirs`（supervisor 精简 `PATH` 中缺失的目录，最常见的是 `pnpm` 自身所在的位置）、`backupRoot`、`logDir`、`sessionsDir`、`storagesDir` 与 `attachmentsDir`（本部署的 `$DSH_HOME` 子目录）。在不同机器或 checkout 上安装前，把 `cordis.patch.yml` 复制进 profile 级的 `--patch` overlay，或就地编辑它；每个字段的含义见 [`dsh-experimental-self-update` 的配置](../self-update/README.zh.md#configuration)。
+`self-update` 行 `config` 下的每个字段都是绝对的、部署特定的值：`repoRoot`（本进程运行所在的 git checkout）、`extraPathDirs`（supervisor 精简 `PATH` 中缺失的目录，最常见的是 `pnpm` 自身所在的位置）、`backupRoot`、`logDir`、`sessionsDir`、`storagesDir` 与 `attachmentsDir`（本部署的 `$DSH_HOME` 子目录）。`overlayRef` 命名持有本部署自己插件树的本地分支（`self-update-plugin`），`overlayPaths` 精确命名该分支拥有的、位于 `repoRoot` 之下的路径——本部署在上游之上添加的每一个路径都必须列在那里，否则一次更新会悄悄地永远不恢复它。`buildArgv` 指向位于叠加内容自身之中的 [`overlay/build.mjs`](overlay/build.mjs)：它会先 `tsc -b` 本包自己的三个 `tsconfig.json`（这些包在上游不知道的根聚合中未做任何注册），然后再运行普通的根级 `pnpm run build`。在不同机器或 checkout 上安装前，把 `cordis.patch.yml` 复制进 profile 级的 `--patch` overlay，或就地编辑它；每个字段的含义见 [`dsh-experimental-self-update` 的配置](../self-update/README.zh.md#configuration)。
 
 ### 获得的功能
 
@@ -56,6 +56,7 @@ pnpm dsh plugin --profile web add ./packages/experimental/self-update-web-profil
 | 文件 | 职责 |
 |---|---|
 | [`cordis.patch.yml`](cordis.patch.yml) | 包含 `self-update` 与 `ui-self-update` 行的有序 Web patch |
+| [`overlay/build.mjs`](overlay/build.mjs) | `buildArgv` 入口点：先 `tsc -b` 叠加内容自己的三个包，再运行根级构建 |
 | [`src/index.ts`](src/index.ts) | 空模块入口；patch 是运行时内容 |
 | [`src/invariant.ts`](src/invariant.ts) | 静态 bundle 的空不变式伴生插件 |
 
@@ -76,7 +77,7 @@ pnpm dsh plugin --profile web add ./packages/experimental/self-update-web-profil
 <a id="model-experience"></a>
 ## 模型体验
 
-无。本 bundle 插入的两行都不注册工具、提示词分区或 Session event；Host Remote service 及其浏览器控件完全面向运维人员。
+无，因为本 bundle 插入的两行都不注册工具、提示词分区或 Session event。
 
 #### KV Cache 影响
 
@@ -87,6 +88,7 @@ pnpm dsh plugin --profile web add ./packages/experimental/self-update-web-profil
 <a id="known-limitations-and-deferred-work"></a>
 
 - **部署特定配置**——`cordis.patch.yml` 中的每个绝对路径都命名了这台确切机器的 checkout 与 `$DSH_HOME`；迁移到另一台机器需要编辑它们（见上方「安装前」）。
+- **`overlayPaths` 需要手动保持同步**——在叠加分支中添加一个不在 `cordis.patch.yml` 已列出路径中的文件，并不会让一次更新恢复它；这份列表是维护者手动编辑的允许列表，不是从分支自身的树派生出来的。
 - **有序组合**——`dsh-base`、`dsh-web-app` 与本包必须保持这个顺序。
 - **仅限源码 checkout**——正式 CLI、Web、npm 与 Python 发布产物都不包含这个私有包。
 

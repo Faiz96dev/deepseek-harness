@@ -1,11 +1,11 @@
-import { access, chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { SelfUpdateGit } from '../src/git.ts'
 import type { SelfUpdateLogLine } from '../src/types.ts'
 import {
-  addUpstreamCommit, createRepoFixture, git, makeDirty, setupJobHarness, testConfig,
+  addUpstreamCommit, createRepoFixture, FIXTURE_OVERLAY_PATHS, FIXTURE_OVERLAY_REF, git, makeDirty, setupJobHarness, testConfig,
 } from './helpers.ts'
 import type { RepoFixture, JobTestHarness } from './helpers.ts'
 
@@ -68,7 +68,7 @@ describe('SelfUpdateGit against a real repository', () => {
     expect(counts.remoteHead.subject).toBe('second commit')
   })
 
-  it('merges a fast-forwardable upstream commit', async () => {
+  it('reports whether a ref exists', async () => {
     repo = await createRepoFixture()
     harness = await setupJobHarness()
     const config = testConfig({
@@ -76,76 +76,8 @@ describe('SelfUpdateGit against a real repository', () => {
     })
     const gitOps = new SelfUpdateGit(harness.ctx, config)
 
-    await addUpstreamCommit(repo.upstreamRoot, 'second commit')
-    const { onLine } = collectingSink()
-    await gitOps.fetch(onLine)
-    const result = await gitOps.merge(onLine)
-    expect(result).toBe('merged')
-    const head = await gitOps.currentHead()
-    expect(head.subject).toBe('second commit')
-  })
-
-  it('aborts a conflicting merge and leaves the working tree clean', async () => {
-    repo = await createRepoFixture()
-    harness = await setupJobHarness()
-    const config = testConfig({
-      repoRoot: repo.repoRoot, backupRoot: '', sessionsDir: '', storagesDir: '', attachmentsDir: '', logDir: '',
-    })
-    const gitOps = new SelfUpdateGit(harness.ctx, config)
-
-    // Diverge: the same file changes on both sides so the merge conflicts.
-    await writeFile(join(repo.upstreamRoot, 'README.md'), 'upstream change\n', 'utf8')
-    await git(repo.upstreamRoot, ['add', '.'])
-    await git(repo.upstreamRoot, ['commit', '-m', 'upstream edits README'])
-
-    await writeFile(join(repo.repoRoot, 'README.md'), 'local change\n', 'utf8')
-    await git(repo.repoRoot, ['add', '.'])
-    await git(repo.repoRoot, ['commit', '-m', 'local edits README'])
-
-    const { onLine } = collectingSink()
-    await gitOps.fetch(onLine)
-    const result = await gitOps.merge(onLine)
-    expect(result).toBe('conflict')
-    expect(await gitOps.isDirty()).toBe(false)
-
-    const status = await git(repo.repoRoot, ['status', '--porcelain'])
-    expect(status.trim()).toBe('')
-  })
-
-  it('throws when a real conflicted merge exists but --abort itself fails', async () => {
-    repo = await createRepoFixture()
-    harness = await setupJobHarness()
-    const config = testConfig({
-      repoRoot: repo.repoRoot, backupRoot: '', sessionsDir: '', storagesDir: '', attachmentsDir: '', logDir: '',
-    })
-    const gitOps = new SelfUpdateGit(harness.ctx, config)
-
-    await writeFile(join(repo.upstreamRoot, 'README.md'), 'upstream change\n', 'utf8')
-    await git(repo.upstreamRoot, ['add', '.'])
-    await git(repo.upstreamRoot, ['commit', '-m', 'upstream edits README'])
-    await writeFile(join(repo.repoRoot, 'README.md'), 'local change\n', 'utf8')
-    await git(repo.repoRoot, ['add', '.'])
-    await git(repo.repoRoot, ['commit', '-m', 'local edits README'])
-
-    const { onLine } = collectingSink()
-    await gitOps.fetch(onLine)
-    await gitOps.merge(onLine)
-    // The call above already aborted the conflict, leaving no MERGE_HEAD;
-    // re-enter the same conflict directly against real git (bypassing
-    // gitOps, whose merge() would abort it again), then hold a stale
-    // index.lock so gitOps.merge()'s own --abort fails with real git's
-    // "Unable to create .git/index.lock" — the same failure mode
-    // `job.spec.ts`'s mocked-throw test exercises at the job layer, proven
-    // here against the real subprocess this package issues.
-    await git(repo.repoRoot, ['merge', '--no-edit', 'upstream/master']).catch(() => {})
-    await access(join(repo.repoRoot, '.git', 'MERGE_HEAD'))
-    await writeFile(join(repo.repoRoot, '.git', 'index.lock'), '', 'utf8')
-    try {
-      await expect(gitOps.merge(onLine)).rejects.toThrow(/git merge --abort exited/)
-    } finally {
-      await rm(join(repo.repoRoot, '.git', 'index.lock'), { force: true })
-      await git(repo.repoRoot, ['merge', '--abort']).catch(() => {})
-    }
+    expect(await gitOps.refExists(FIXTURE_OVERLAY_REF)).toBe(true)
+    expect(await gitOps.refExists('no-such-ref')).toBe(false)
   })
 
   it('resets hard to a named commit', async () => {
@@ -160,11 +92,92 @@ describe('SelfUpdateGit against a real repository', () => {
     await addUpstreamCommit(repo.upstreamRoot, 'second commit')
     const { onLine } = collectingSink()
     await gitOps.fetch(onLine)
-    await gitOps.merge(onLine)
+    const counts = await gitOps.revCounts()
+    await gitOps.resetHard(counts.remoteHead.sha, onLine)
     expect((await gitOps.currentHead()).subject).toBe('second commit')
 
     await gitOps.resetHard(before.sha, onLine)
     expect((await gitOps.currentHead()).sha).toBe(before.sha)
+  })
+
+  it('restores paths from another ref onto the working tree and index', async () => {
+    repo = await createRepoFixture()
+    harness = await setupJobHarness()
+    const config = testConfig({
+      repoRoot: repo.repoRoot, backupRoot: '', sessionsDir: '', storagesDir: '', attachmentsDir: '', logDir: '',
+    })
+    const gitOps = new SelfUpdateGit(harness.ctx, config)
+    const { onLine } = collectingSink()
+
+    expect(await readFile(join(repo.repoRoot, 'plugins', 'marker.txt'), 'utf8').catch(() => null)).toBeNull()
+    await gitOps.restorePaths(FIXTURE_OVERLAY_REF, FIXTURE_OVERLAY_PATHS, onLine)
+    expect(await readFile(join(repo.repoRoot, 'plugins', 'marker.txt'), 'utf8')).toBe('plugin content\n')
+    const status = await git(repo.repoRoot, ['status', '--porcelain'])
+    expect(status.trim()).toBe('A  plugins/marker.txt')
+  })
+
+  it('throws when restorePaths names an unknown ref', async () => {
+    repo = await createRepoFixture()
+    harness = await setupJobHarness()
+    const config = testConfig({
+      repoRoot: repo.repoRoot, backupRoot: '', sessionsDir: '', storagesDir: '', attachmentsDir: '', logDir: '',
+    })
+    const gitOps = new SelfUpdateGit(harness.ctx, config)
+    const { onLine } = collectingSink()
+    await expect(gitOps.restorePaths('no-such-ref', FIXTURE_OVERLAY_PATHS, onLine)).rejects.toThrow(/git checkout no-such-ref/)
+  })
+
+  it('stages and commits every working-tree change, bypassing hooks', async () => {
+    repo = await createRepoFixture()
+    harness = await setupJobHarness()
+    const config = testConfig({
+      repoRoot: repo.repoRoot, backupRoot: '', sessionsDir: '', storagesDir: '', attachmentsDir: '', logDir: '',
+    })
+    const gitOps = new SelfUpdateGit(harness.ctx, config)
+    const { onLine } = collectingSink()
+    const before = await gitOps.currentHead()
+
+    await gitOps.restorePaths(FIXTURE_OVERLAY_REF, FIXTURE_OVERLAY_PATHS, onLine)
+    await gitOps.commitAll('self-update: overlay plugin onto test', onLine)
+
+    const after = await gitOps.currentHead()
+    expect(after.sha).not.toBe(before.sha)
+    expect(after.subject).toBe('self-update: overlay plugin onto test')
+    expect(await gitOps.isDirty()).toBe(false)
+  })
+
+  it('throws when git add itself fails', async () => {
+    repo = await createRepoFixture()
+    harness = await setupJobHarness()
+    // Real git's `add -A` essentially never fails on a healthy repository; a
+    // fake `git` that fails only for `add` is the only deterministic way to
+    // force this branch distinctly from a failed `commit`.
+    const binDir = await mkdtemp(join(tmpdir(), 'dsh-self-update-fakebin-'))
+    const fakeGit = join(binDir, 'git')
+    await writeFile(fakeGit, '#!/bin/sh\nif [ "$1" = "add" ]; then exit 1; fi\nexit 0\n', 'utf8')
+    await chmod(fakeGit, 0o755)
+    const config = testConfig({
+      repoRoot: repo.repoRoot, backupRoot: '', sessionsDir: '', storagesDir: '', attachmentsDir: '', logDir: '',
+      extraPathDirs: [binDir],
+    })
+    const gitOps = new SelfUpdateGit(harness.ctx, config)
+    const { onLine } = collectingSink()
+    try {
+      await expect(gitOps.commitAll('message', onLine)).rejects.toThrow(/git add -A exited 1/)
+    } finally {
+      await rm(binDir, { recursive: true, force: true })
+    }
+  })
+
+  it('throws when commitAll has nothing to commit', async () => {
+    repo = await createRepoFixture()
+    harness = await setupJobHarness()
+    const config = testConfig({
+      repoRoot: repo.repoRoot, backupRoot: '', sessionsDir: '', storagesDir: '', attachmentsDir: '', logDir: '',
+    })
+    const gitOps = new SelfUpdateGit(harness.ctx, config)
+    const { onLine } = collectingSink()
+    await expect(gitOps.commitAll('empty', onLine)).rejects.toThrow(/git commit exited/)
   })
 
   it('throws when fetch names a nonexistent remote branch', async () => {
@@ -213,22 +226,6 @@ describe('SelfUpdateGit against a real repository', () => {
     const gitOps = new SelfUpdateGit(harness.ctx, config)
 
     await expect(gitOps.revCounts()).rejects.toThrow(/git log -1/)
-  })
-
-  it('resolves failed, without invoking --abort, when a merge attempt starts no real merge', async () => {
-    repo = await createRepoFixture()
-    harness = await setupJobHarness()
-    const config = testConfig({
-      repoRoot: repo.repoRoot, backupRoot: '', sessionsDir: '', storagesDir: '', attachmentsDir: '', logDir: '', branch: 'no-such-branch',
-    })
-    const gitOps = new SelfUpdateGit(harness.ctx, config)
-    // No fetch happened, so `git merge --no-edit upstream/no-such-branch`
-    // fails without ever writing MERGE_HEAD; merge() checks for MERGE_HEAD
-    // before attempting `--abort`, so this resolves 'failed' rather than
-    // running (and failing) an abort against a merge that never started —
-    // exercising that check distinctly from an ordinary aborted conflict.
-    const { onLine } = collectingSink()
-    await expect(gitOps.merge(onLine)).resolves.toBe('failed')
   })
 
   it('throws when resetHard names an unknown commit', async () => {

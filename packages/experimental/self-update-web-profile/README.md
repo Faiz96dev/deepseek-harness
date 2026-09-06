@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-experimental-self-update-web-profile` is the private Web layer for [self-update](../self-update/README.md): a sidebar Update button that fetches, merges, rebuilds, and restarts a source-checkout deployment. Add it after `@deepseek-ai/dsh-web-app` to mount both the Host Remote service and its browser controls in one step. Official releases exclude this package, so it is available only from a source checkout, and its configuration is deployment-specific (absolute paths for this exact machine's checkout and `$DSH_HOME`).
+`dsh-experimental-self-update-web-profile` is the private Web layer for [self-update](../self-update/README.md): a sidebar Update button that fetches, resets onto upstream, overlays this deployment's own plugin tree, rebuilds, and restarts a source-checkout deployment. Add it after `@deepseek-ai/dsh-web-app` to mount both the Host Remote service and its browser controls in one step. Official releases exclude this package, so it is available only from a source checkout, and its configuration is deployment-specific (absolute paths for this exact machine's checkout and `$DSH_HOME`).
 
 ## Table of Contents
 
@@ -37,7 +37,7 @@ This activates this package's declared patch, mounting both the `self-update` Ho
 
 ### Before installing: edit `cordis.patch.yml` for this deployment
 
-Every field under the `self-update` row's `config` is an absolute, deployment-specific value: `repoRoot` (the git checkout this process runs from), `extraPathDirs` (directories a supervisor's minimal `PATH` is missing, most commonly wherever `pnpm` itself lives), `backupRoot`, `logDir`, `sessionsDir`, `storagesDir`, and `attachmentsDir` (this deployment's `$DSH_HOME` subdirectories). Copy `cordis.patch.yml` into a profile-level `--patch` overlay or edit it in place before installing on a different machine or checkout; see [`dsh-experimental-self-update`'s Configuration](../self-update/README.md#configuration) for every field's meaning.
+Every field under the `self-update` row's `config` is an absolute, deployment-specific value: `repoRoot` (the git checkout this process runs from), `extraPathDirs` (directories a supervisor's minimal `PATH` is missing, most commonly wherever `pnpm` itself lives), `backupRoot`, `logDir`, `sessionsDir`, `storagesDir`, and `attachmentsDir` (this deployment's `$DSH_HOME` subdirectories). `overlayRef` names the local branch holding this deployment's own plugin tree (`self-update-plugin`), and `overlayPaths` names exactly the paths under `repoRoot` that branch owns — every path this deployment adds on top of upstream must be listed there, or an update silently never restores it. `buildArgv` points at [`overlay/build.mjs`](overlay/build.mjs), which lives inside the overlay itself: it `tsc -b`s this package's own three `tsconfig.json` files (registering them nowhere in the root aggregates upstream does not know about) before running the ordinary root `pnpm run build`. Copy `cordis.patch.yml` into a profile-level `--patch` overlay or edit it in place before installing on a different machine or checkout; see [`dsh-experimental-self-update`'s Configuration](../self-update/README.md#configuration) for every field's meaning.
 
 ### What you get
 
@@ -56,6 +56,7 @@ The package's runtime content is [`cordis.patch.yml`](cordis.patch.yml). Applied
 | File | Role |
 |---|---|
 | [`cordis.patch.yml`](cordis.patch.yml) | Ordered Web patch containing the `self-update` and `ui-self-update` rows |
+| [`overlay/build.mjs`](overlay/build.mjs) | `buildArgv` entry point: `tsc -b`s the overlay's own three packages, then runs the root build |
 | [`src/index.ts`](src/index.ts) | Empty module entry; the patch is the runtime content |
 | [`src/invariant.ts`](src/invariant.ts) | Empty invariant companion for the static bundle |
 
@@ -76,7 +77,7 @@ The package's runtime content is [`cordis.patch.yml`](cordis.patch.yml). Applied
 <a id="model-experience"></a>
 ## Model Experience
 
-None. Neither row this bundle inserts registers a tool, prompt section, or Session event; the Host Remote service and its browser controls are entirely operator-facing.
+None, as neither row this bundle inserts registers a tool, prompt section, or Session event.
 
 #### KV Cache effect
 
@@ -87,6 +88,7 @@ This Web bundle adds no model request content.
 <a id="known-limitations-and-deferred-work"></a>
 
 - **Deployment-specific configuration** — every absolute path in `cordis.patch.yml` names this exact machine's checkout and `$DSH_HOME`; moving to another machine requires editing them (see "Before installing" above).
+- **`overlayPaths` must be kept in sync by hand** — adding a file to the overlay branch outside the paths already listed in `cordis.patch.yml` does not make an update restore it; the list is a maintainer-edited allowlist, not derived from the branch's own tree.
 - **Ordered composition** — `dsh-base`, `dsh-web-app`, and this package must remain in that order.
 - **Source-checkout only** — official CLI, Web, npm, and Python release payloads exclude this private package.
 

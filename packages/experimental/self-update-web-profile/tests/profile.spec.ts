@@ -11,7 +11,7 @@ import { entryListSchema } from '@deepseek-ai/cordis-plugin-include'
 import * as WebProfileInvariant from '../src/invariant.ts'
 
 const REQUIRED_CONFIG_KEYS = [
-  'repoRoot', 'remoteName', 'branch', 'installArgv', 'buildArgv', 'verifyArgv',
+  'repoRoot', 'remoteName', 'branch', 'overlayRef', 'overlayPaths', 'installArgv', 'buildArgv', 'verifyArgv',
   'extraPathDirs', 'backupRoot', 'keepBackups', 'sessionsDir', 'storagesDir',
   'attachmentsDir', 'graceMs', 'maxLogLines', 'logDir',
 ]

@@ -29,11 +29,11 @@ Install the package through [`@deepseek-ai/dsh-experimental-self-update-web-prof
 
 ### Check and apply an update
 
-The footer button shows a status dot: green when up to date, amber once a check finds commits behind upstream, and blue while a job is running. Opening the panel loads status and the current job (if any); its first line always names the checked-out release version and the short `HEAD` sha. "Check" fetches upstream and reports how far behind it the checkout is. "Update" re-reads status and asks for confirmation, then starts a job; if one or more Sessions are currently active, a warning explains that their in-flight turn will be interrupted (and transparently recovered on next open) and requires an explicit "Update anyway" before proceeding. A start the Host refuses (a dirty working tree, active Sessions without acknowledgement, no restart capability) is named in the panel, and a failed Remote call shows its message, so a click never appears to do nothing.
+The footer button shows a status dot: green when up to date, amber once a check finds commits behind upstream, and blue while a job is running. Opening the panel loads status and the current job (if any); its first line always names the checked-out release version and the short `HEAD` sha. "Check" fetches upstream and reports how far behind it the checkout is. "Update" starts a job immediately — no confirmation step, and no question about active Sessions: the Host flushes and transparently recovers any in-flight turn on its own. A start the Host refuses (another job already running, a dirty working tree, no restart capability) is named in the panel, and a failed Remote call shows its message, so a click never appears to do nothing.
 
 ### Watch progress and recover after the restart
 
-While a job runs, the panel shows its current phase and a scrolling log of the underlying git/install/build/verify output. Once the job reaches its restart phase, the panel switches to a "Restarting…" banner; when the physical connection re-establishes afterward, the page reloads automatically so every client bundle is guaranteed current.
+While a job runs, the panel shows its current phase and a scrolling log of the underlying git/install/build/verify output; it stays open and cannot be dismissed by an outside click or Escape until the job settles, and it opens on its own the moment a job becomes active — even one started from another tab — so live progress is never lost behind an accidental close. Once the job reaches its restart phase, the panel switches to a "Restarting…" banner; when the physical connection re-establishes afterward, the page reloads automatically so every client bundle is guaranteed current.
 
 -----
 
@@ -83,7 +83,6 @@ No direct effect.
 
 - **No progress persistence across a full page reload before the restart** — if the tab reloads (or is closed) while a job is running, the panel reopens with only what a fresh `follow` baseline reports; no separate log history view exists.
 - **Reload-on-reconnect is unconditional** — any `connection/reset` while the panel believes a restart is in progress triggers `location.reload()`; a spurious reconnect during an otherwise-idle panel does not (the check is gated on the `restarting` view flag).
-- **`activeSessions` is a coarse proxy** — it counts Sessions currently attached to a live fiber, not literally "a turn is in flight," so the warning can appear for an idle-but-open Session.
 
 <a id="dev-note"></a>
 ### Dev Note

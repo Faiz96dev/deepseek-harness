@@ -1,7 +1,7 @@
 /**
  * Pre-update snapshot of every durable Session-adjacent directory. This is a
  * disaster-recovery artifact for a human operator, not part of the automated
- * rollback path: `git merge`/`installArgv`/`buildArgv` never touch these
+ * rollback path: `git reset`/`git checkout`/`installArgv`/`buildArgv` never touch these
  * directories (they live under `$DSH_HOME`, outside the git checkout), so the
  * automated rollback only ever reverts the git tree.
  * @module @deepseek-ai/dsh-experimental-self-update/backup

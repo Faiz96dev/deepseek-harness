@@ -58,7 +58,6 @@ describe('SelfUpdateService.status', () => {
     expect(status.remoteHead).toBeNull()
     expect(status.ahead).toBe(0)
     expect(status.dirty).toBe(false)
-    expect(status.activeSessions).toBe(0)
     expect(status.job).toBeNull()
     expect(status.lastRun).toBeNull()
   })
@@ -67,12 +66,6 @@ describe('SelfUpdateService.status', () => {
     const ctx = await setup()
     await makeDirty(ctx.repo.repoRoot)
     expect((await ctx.service.status()).dirty).toBe(true)
-  })
-
-  it('reports the count of Sessions attached to a live fiber', async () => {
-    const ctx = await setup()
-    ctx.harness.ctx.sessions.create()
-    expect((await ctx.service.status()).activeSessions).toBe(1)
   })
 
   it('fails loud when repoRoot carries no package.json', async () => {
@@ -99,7 +92,7 @@ describe('SelfUpdateService.start logging', () => {
     const ctx = await setup()
     await makeDirty(ctx.repo.repoRoot)
     const warn = vi.spyOn(ctx.harness.ctx.logger, 'warn')
-    await ctx.service.start({})
+    await ctx.service.start()
     expect(warn).toHaveBeenCalledWith('self-update: start refused: {"code":"dirty-working-tree"}')
   })
 })
@@ -142,57 +135,44 @@ describe('SelfUpdateService.start', () => {
   it('refuses when the working tree is dirty', async () => {
     const ctx = await setup()
     await makeDirty(ctx.repo.repoRoot)
-    const result = await ctx.service.start({})
+    const result = await ctx.service.start()
     expect(result).toEqual({ ok: false, error: { code: 'dirty-working-tree' } })
   })
 
   it('refuses when no bounded exit request is available', async () => {
     const ctx = await setup({ withAppExit: false })
-    const result = await ctx.service.start({})
+    const result = await ctx.service.start()
     expect(result).toEqual({ ok: false, error: { code: 'app-exit-unavailable' } })
-  })
-
-  it('refuses when active Sessions exist and acknowledgeActiveSessions is not set, then succeeds once acknowledged', async () => {
-    const ctx = await setup()
-    await addUpstreamCommit(ctx.repo.upstreamRoot, 'second commit')
-    ctx.harness.ctx.sessions.create()
-
-    const refused = await ctx.service.start({})
-    expect(refused).toEqual({ ok: false, error: { code: 'active-sessions-need-acknowledgement', activeSessions: 1 } })
-
-    const started = await ctx.service.start({ acknowledgeActiveSessions: true })
-    expect(started.ok).toBe(true)
-    // Let the job settle before teardown removes the fixture it is still logging into.
-    await vi.waitFor(() => { expect(ctx.appExit).toHaveBeenCalled() })
   })
 
   it('refuses a second start while a job is still running, but accepts one once the first has finished', async () => {
     const ctx = await setup()
     await addUpstreamCommit(ctx.repo.upstreamRoot, 'second commit')
 
-    const first = await ctx.service.start({})
+    const first = await ctx.service.start()
     expect(first.ok).toBe(true)
-    const second = await ctx.service.start({})
+    const second = await ctx.service.start()
     expect(second).toEqual({ ok: false, error: { code: 'job-already-running' } })
 
     await vi.waitFor(() => { expect(ctx.appExit).toHaveBeenCalledWith(0) })
 
     await addUpstreamCommit(ctx.repo.upstreamRoot, 'third commit')
-    const third = await ctx.service.start({})
+    const third = await ctx.service.start()
     expect(third.ok).toBe(true)
     // Let the third job settle (and stop writing its log file) before
     // afterEach removes the fixture directory that file lives in.
     await vi.waitFor(() => { expect(ctx.appExit).toHaveBeenCalledTimes(2) })
   })
 
-  it('flushes every live Session before starting a job', async () => {
+  it('flushes every live Session before starting a job, without asking about them', async () => {
     const ctx = await setup()
     await addUpstreamCommit(ctx.repo.upstreamRoot, 'second commit')
     const session = ctx.harness.ctx.sessions.create()
     const flushed: string[] = []
     ctx.harness.ctx.on('session/flush', (flushedSession) => { flushed.push(flushedSession.id) })
 
-    await ctx.service.start({ acknowledgeActiveSessions: true })
+    const started = await ctx.service.start()
+    expect(started.ok).toBe(true)
     expect(flushed).toContain(session.id)
     // Let the job settle before teardown removes the fixture it is still logging into.
     await vi.waitFor(() => { expect(ctx.appExit).toHaveBeenCalled() })
@@ -201,7 +181,7 @@ describe('SelfUpdateService.start', () => {
   it('records lastRun once the started job settles', async () => {
     const ctx = await setup()
     await addUpstreamCommit(ctx.repo.upstreamRoot, 'second commit')
-    await ctx.service.start({})
+    await ctx.service.start()
     await vi.waitFor(() => { expect(ctx.appExit).toHaveBeenCalled() })
     const status = await ctx.service.status()
     expect(status.lastRun?.outcome).toBe('succeeded')
@@ -213,7 +193,7 @@ describe('SelfUpdateService.start', () => {
     })
     await addUpstreamCommit(ctx.repo.upstreamRoot, 'second commit')
 
-    await ctx.service.start({})
+    await ctx.service.start()
     await vi.waitFor(async () => {
       const status = await ctx.service.status()
       expect(status.lastRun).not.toBeNull()
@@ -238,7 +218,7 @@ describe('SelfUpdateService.follow', () => {
   it('yields a baseline with the current job plus live increments once one has started', async () => {
     const ctx = await setup()
     await addUpstreamCommit(ctx.repo.upstreamRoot, 'second commit')
-    await ctx.service.start({})
+    await ctx.service.start()
 
     const controller = new AbortController()
     const frames: { type: string }[] = []

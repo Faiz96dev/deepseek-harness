@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -6,7 +6,7 @@ import { SelfUpdateGit } from '../src/git.ts'
 import { isTerminal, SelfUpdateJob } from '../src/job.ts'
 import type { SelfUpdateFollowFrame } from '../src/types.ts'
 import {
-  addUpstreamCommit, createRepoFixture, failWhileMarkerPresent, git, makeDirty, nodeScript, setupJobHarness, testConfig,
+  addUpstreamCommit, createRepoFixture, failWhileMarkerPresent, makeDirty, nodeScript, setupJobHarness, testConfig,
 } from './helpers.ts'
 import type { JobTestHarness, RepoFixture } from './helpers.ts'
 
@@ -62,7 +62,7 @@ async function drain(job: SelfUpdateJob): Promise<SelfUpdateFollowFrame[]> {
 }
 
 describe('SelfUpdateJob', () => {
-  it('reports up-to-date and performs no merge/install/build when nothing is behind', async () => {
+  it('reports up-to-date and performs no backup/reset/install/build when nothing is behind', async () => {
     const ctx = await setup()
     const appExit = vi.fn()
     const config = testConfigFor(ctx.repo, ctx.backupBase)
@@ -73,7 +73,7 @@ describe('SelfUpdateJob', () => {
     expect(job.snapshot.backupPath).toBeNull()
     expect(appExit).not.toHaveBeenCalled()
     expect(frames.some(f => f.type === 'phase' && f.phase === 'backing-up')).toBe(false)
-    expect(frames.some(f => f.type === 'phase' && f.phase === 'installing')).toBe(false)
+    expect(frames.some(f => f.type === 'phase' && f.phase === 'resetting')).toBe(false)
   })
 
   it('appends every phase, subprocess line, and the outcome to its own durable log file', async () => {
@@ -101,7 +101,7 @@ describe('SelfUpdateJob', () => {
     expect(text).toMatch(/ phase restarting$/m)
     expect(text).toMatch(/\[building\] \[stdout\] building now$/m)
     expect(text).toMatch(/ outcome succeeded$/m)
-    expect(info).toHaveBeenCalledWith(expect.stringMatching(/self-update \[[0-9a-f]{8}\] phase merging/))
+    expect(info).toHaveBeenCalledWith(expect.stringMatching(/self-update \[[0-9a-f]{8}\] phase resetting/))
   })
 
   it('reports a lost log file once through the Host logger and still completes the job', async () => {
@@ -139,7 +139,27 @@ describe('SelfUpdateJob', () => {
     expect(appExit).not.toHaveBeenCalled()
   })
 
-  it('runs the full happy path through restart when installArgv/buildArgv/verifyArgv succeed', async () => {
+  it('fails preflight when overlayRef does not exist, without touching git or appExit', async () => {
+    const ctx = await setup()
+    const appExit = vi.fn()
+    const config = testConfigFor(ctx.repo, ctx.backupBase, {
+      repoRoot: ctx.repo.repoRoot,
+      backupRoot: join(ctx.backupBase, 'backups'),
+      sessionsDir: join(ctx.backupBase, 'sessions'),
+      storagesDir: join(ctx.backupBase, 'storages'),
+      attachmentsDir: join(ctx.backupBase, 'attachments'),
+      overlayRef: 'no-such-ref',
+    })
+    const job = SelfUpdateJob.start({ ctx: ctx.harness.ctx, git: ctx.git, config, appExit })
+
+    await drain(job)
+    expect(job.snapshot.outcome).toBe('failed')
+    expect(job.snapshot.failure).toEqual({ code: 'overlay-ref-missing', ref: 'no-such-ref' })
+    expect(appExit).not.toHaveBeenCalled()
+    expect((await ctx.git.currentHead()).subject).toBe('initial')
+  })
+
+  it('runs the full happy path through restart: reset onto upstream, overlay restored, one commit', async () => {
     const ctx = await setup()
     await addUpstreamCommit(ctx.repo.upstreamRoot, 'second commit')
     const appExit = vi.fn()
@@ -148,12 +168,16 @@ describe('SelfUpdateJob', () => {
 
     const frames = await drain(job)
     const phases = frames.filter(f => f.type === 'phase').map(f => (f as { phase: string }).phase)
-    expect(phases).toEqual(['fetching', 'backing-up', 'merging', 'installing', 'building', 'verifying', 'restarting'])
+    expect(phases).toEqual([
+      'fetching', 'backing-up', 'resetting', 'overlaying', 'installing', 'building', 'verifying', 'committing', 'restarting',
+    ])
     expect(job.snapshot.outcome).toBe('succeeded')
     expect(job.snapshot.backupPath).not.toBeNull()
 
     const head = await ctx.git.currentHead()
-    expect(head.subject).toBe('second commit')
+    expect(head.subject).toMatch(/^self-update: overlay plugin onto [0-9a-f]{7}$/)
+    expect(await readFile(join(ctx.repo.repoRoot, 'plugins', 'marker.txt'), 'utf8')).toBe('plugin content\n')
+    expect(await ctx.git.isDirty()).toBe(false)
 
     await vi.waitFor(() => { expect(appExit).toHaveBeenCalledWith(0) })
   })
@@ -169,9 +193,10 @@ describe('SelfUpdateJob', () => {
       sessionsDir: join(ctx.backupBase, 'sessions'),
       storagesDir: join(ctx.backupBase, 'storages'),
       attachmentsDir: join(ctx.backupBase, 'attachments'),
-      // Fails only on the merged tree (which carries this marker file); the
-      // reverted pre-update commit does not, so the rollback's own rebuild
-      // genuinely succeeds instead of failing unconditionally either way.
+      // Fails only on the reset-and-overlaid tree (which carries this marker
+      // file from the upstream commit); the reverted pre-update commit does
+      // not, so the rollback's own rebuild genuinely succeeds instead of
+      // failing unconditionally either way.
       buildArgv: failWhileMarkerPresent('second-commit.txt'),
     })
     const job = SelfUpdateJob.start({ ctx: ctx.harness.ctx, git: ctx.git, config, appExit })
@@ -179,6 +204,29 @@ describe('SelfUpdateJob', () => {
     await drain(job)
     expect(job.snapshot.outcome).toBe('rolled-back')
     expect(job.snapshot.failure).toMatchObject({ code: 'build-failed' })
+    expect(appExit).not.toHaveBeenCalled()
+
+    const head = await ctx.git.currentHead()
+    expect(head.sha).toBe(before.sha)
+  })
+
+  it('rolls back when committing the overlay fails, and reports commit-failed', async () => {
+    const ctx = await setup()
+    await addUpstreamCommit(ctx.repo.upstreamRoot, 'second commit')
+    const before = await ctx.git.currentHead()
+    const appExit = vi.fn()
+    const config = testConfigFor(ctx.repo, ctx.backupBase)
+    const throwingGit: SelfUpdateGit = new Proxy(ctx.git, {
+      get(target, prop, receiver): unknown {
+        if (prop === 'commitAll') return async () => { throw new Error('git commit exited 1') }
+        return Reflect.get(target, prop, receiver)
+      },
+    })
+    const job = SelfUpdateJob.start({ ctx: ctx.harness.ctx, git: throwingGit, config, appExit })
+
+    await drain(job)
+    expect(job.snapshot.outcome).toBe('rolled-back')
+    expect(job.snapshot.failure).toMatchObject({ code: 'commit-failed', message: 'git commit exited 1' })
     expect(appExit).not.toHaveBeenCalled()
 
     const head = await ctx.git.currentHead()
@@ -205,100 +253,53 @@ describe('SelfUpdateJob', () => {
     expect(job.snapshot.failure).toMatchObject({ code: 'rollback-failed' })
   })
 
-  it('aborts a conflicting merge and reports merge-conflict with a clean working tree', async () => {
+  it('reports reset-failed, stringifying a non-Error thrown value, when resetHard throws', async () => {
     const ctx = await setup()
-    const { writeFile } = await import('node:fs/promises')
-    await writeFile(join(ctx.repo.upstreamRoot, 'README.md'), 'upstream change\n', 'utf8')
-    await git(ctx.repo.upstreamRoot, ['add', '.'])
-    await git(ctx.repo.upstreamRoot, ['commit', '-m', 'upstream edits README'])
-    await writeFile(join(ctx.repo.repoRoot, 'README.md'), 'local change\n', 'utf8')
-    await git(ctx.repo.repoRoot, ['add', '.'])
-    await git(ctx.repo.repoRoot, ['commit', '-m', 'local edits README'])
-
+    await addUpstreamCommit(ctx.repo.upstreamRoot, 'second commit')
     const appExit = vi.fn()
     const config = testConfigFor(ctx.repo, ctx.backupBase)
+    const throwingGit: SelfUpdateGit = new Proxy(ctx.git, {
+      get(target, prop, receiver): unknown {
+        if (prop === 'resetHard') return async () => { throw 'not an Error instance' }
+        return Reflect.get(target, prop, receiver)
+      },
+    })
+    const job = SelfUpdateJob.start({ ctx: ctx.harness.ctx, git: throwingGit, config, appExit })
+
+    await drain(job)
+    expect(job.snapshot.outcome).toBe('failed')
+    expect(job.snapshot.failure).toEqual({ code: 'reset-failed', message: 'not an Error instance' })
+    expect(appExit).not.toHaveBeenCalled()
+  })
+
+  it('reports overlay-failed when restorePaths names a path missing from the overlay ref', async () => {
+    const ctx = await setup()
+    await addUpstreamCommit(ctx.repo.upstreamRoot, 'second commit')
+    const appExit = vi.fn()
+    const config = testConfigFor(ctx.repo, ctx.backupBase, {
+      repoRoot: ctx.repo.repoRoot,
+      backupRoot: join(ctx.backupBase, 'backups'),
+      sessionsDir: join(ctx.backupBase, 'sessions'),
+      storagesDir: join(ctx.backupBase, 'storages'),
+      attachmentsDir: join(ctx.backupBase, 'attachments'),
+      overlayPaths: ['no-such-path-in-overlay'],
+    })
     const job = SelfUpdateJob.start({ ctx: ctx.harness.ctx, git: ctx.git, config, appExit })
 
     await drain(job)
     expect(job.snapshot.outcome).toBe('failed')
-    expect(job.snapshot.failure).toMatchObject({ code: 'merge-conflict' })
-    expect(await ctx.git.isDirty()).toBe(false)
-  })
-
-  it('reports merge-unrecoverable when the merge call itself throws (merge and its own --abort both failed)', async () => {
-    const ctx = await setup()
-    await addUpstreamCommit(ctx.repo.upstreamRoot, 'second commit')
-    const appExit = vi.fn()
-    const config = testConfigFor(ctx.repo, ctx.backupBase)
-    // git.spec.ts exercises SelfUpdateGit.merge's own abort-failure path
-    // against real git; this test isolates the job's handling of that thrown
-    // error (a *conflicted* merge whose own --abort then also fails, unlike
-    // merge-failed below, which never has a conflicted merge to abort).
-    const throwingGit: SelfUpdateGit = new Proxy(ctx.git, {
-      get(target, prop, receiver): unknown {
-        if (prop === 'merge') return async () => { throw new Error('git merge --abort exited 1') }
-        return Reflect.get(target, prop, receiver)
-      },
-    })
-    const job = SelfUpdateJob.start({ ctx: ctx.harness.ctx, git: throwingGit, config, appExit })
-
-    await drain(job)
-    expect(job.snapshot.outcome).toBe('failed')
-    expect(job.snapshot.failure).toMatchObject({ code: 'merge-unrecoverable' })
+    expect(job.snapshot.failure).toMatchObject({ code: 'overlay-failed' })
     expect(appExit).not.toHaveBeenCalled()
   })
 
-  it('reports merge-failed, without touching the working tree, when merge exits non-zero but never starts a conflicted merge', async () => {
-    const ctx = await setup()
-    await addUpstreamCommit(ctx.repo.upstreamRoot, 'second commit')
-    const appExit = vi.fn()
-    const config = testConfigFor(ctx.repo, ctx.backupBase)
-    // Mirrors what real git reports for a fast-forward-eligible merge that
-    // fails transiently (no MERGE_HEAD ever written): SelfUpdateGit.merge
-    // resolves 'failed' rather than throwing, since there is nothing to abort
-    // and nothing to roll back.
-    const failingGit: SelfUpdateGit = new Proxy(ctx.git, {
-      get(target, prop, receiver): unknown {
-        if (prop === 'merge') return async () => 'failed'
-        return Reflect.get(target, prop, receiver)
-      },
-    })
-    const job = SelfUpdateJob.start({ ctx: ctx.harness.ctx, git: failingGit, config, appExit })
-
-    await drain(job)
-    expect(job.snapshot.outcome).toBe('failed')
-    expect(job.snapshot.failure).toMatchObject({ code: 'merge-failed' })
-    expect(await ctx.git.isDirty()).toBe(false)
-    expect(appExit).not.toHaveBeenCalled()
-  })
-
-  it('stringifies a non-Error thrown value into the reported failure message', async () => {
-    const ctx = await setup()
-    await addUpstreamCommit(ctx.repo.upstreamRoot, 'second commit')
-    const appExit = vi.fn()
-    const config = testConfigFor(ctx.repo, ctx.backupBase)
-    const throwingGit: SelfUpdateGit = new Proxy(ctx.git, {
-      get(target, prop, receiver): unknown {
-        if (prop === 'merge') {
-          return async () => { throw 'not an Error instance' }
-        }
-        return Reflect.get(target, prop, receiver)
-      },
-    })
-    const job = SelfUpdateJob.start({ ctx: ctx.harness.ctx, git: throwingGit, config, appExit })
-
-    await drain(job)
-    expect(job.snapshot.failure).toMatchObject({ code: 'merge-unrecoverable', message: 'not an Error instance' })
-  })
-
-  it('wraps a bare error from preflight itself (not one of its own business checks) as merge-unrecoverable', async () => {
+  it('wraps a bare error from preflight itself (not one of its own business checks) as unexpected', async () => {
     const ctx = await setup()
     const appExit = vi.fn()
     const config = testConfigFor(ctx.repo, ctx.backupBase)
-    // isDirty()/appExit are the only checks preflight throws its own
-    // SelfUpdateBusinessError for; currentHead() failing is the one bare,
-    // unwrapped throw preflight can still surface, exercising toFailure's
-    // last-resort branch for a throw that reached it unwrapped.
+    // isDirty()/appExit/refExists are the only checks preflight throws its
+    // own SelfUpdateBusinessError for; currentHead() failing is the one
+    // bare, unwrapped throw preflight can still surface, exercising
+    // toFailure's last-resort branch for a throw that reached it unwrapped.
     const throwingGit: SelfUpdateGit = new Proxy(ctx.git, {
       get(target, prop, receiver): unknown {
         if (prop === 'currentHead') return async () => { throw new Error('git log failed') }
@@ -309,7 +310,7 @@ describe('SelfUpdateJob', () => {
 
     await drain(job)
     expect(job.snapshot.outcome).toBe('failed')
-    expect(job.snapshot.failure).toEqual({ code: 'merge-unrecoverable', message: 'git log failed' })
+    expect(job.snapshot.failure).toEqual({ code: 'unexpected', message: 'git log failed' })
     expect(appExit).not.toHaveBeenCalled()
   })
 
@@ -341,7 +342,6 @@ describe('SelfUpdateJob', () => {
     const appExit = vi.fn()
     // A file (not a directory) in backupRoot's place makes mkdir(recursive)
     // fail with ENOTDIR when createBackup tries to create its subdirectory.
-    const { writeFile } = await import('node:fs/promises')
     const blockedBackupRoot = join(ctx.backupBase, 'blocked-backup-root')
     await writeFile(blockedBackupRoot, 'not a directory', 'utf8')
     const config = testConfigFor(ctx.repo, ctx.backupBase, {

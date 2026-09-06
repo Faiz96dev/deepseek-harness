@@ -100,7 +100,7 @@ export function isTerminal(snapshot: SelfUpdateJobSnapshot): boolean {
   return snapshot.finishedAt !== null
 }
 
-/** One update attempt: preflight, fetch, backup, merge, install, build, verify, restart. */
+/** One update attempt: preflight, fetch, backup, reset onto upstream, overlay, install, build, verify, commit, restart. */
 export class SelfUpdateJob {
   private snapshotValue: SelfUpdateJobSnapshot
   private readonly log: SelfUpdateLogLine[] = []
@@ -266,40 +266,44 @@ export class SelfUpdateJob {
       this.transition({ backupPath })
       this.systemLine('backing-up', `snapshot written to ${backupPath}`)
 
-      this.enterPhase('merging')
-      let mergeResult: 'merged' | 'conflict' | 'failed'
+      this.enterPhase('resetting')
+      const remoteHead = this.snapshotValue.toCommit as SelfUpdateCommit
       try {
-        mergeResult = await this.deps.git.merge((line) => { this.recordLine(line) })
+        await this.deps.git.resetHard(remoteHead.sha, (line) => { this.recordLine(line) })
       } catch (error) {
-        // git merge and its own --abort both failed: the repository's merge
-        // state is unknown and needs a human, unlike an ordinary conflict.
-        this.finish('failed', { code: 'merge-unrecoverable', message: messageOf(error) })
-        return
+        throw new SelfUpdateBusinessError({ code: 'reset-failed', message: messageOf(error) })
       }
-      if (mergeResult === 'conflict') {
-        this.finish('failed', { code: 'merge-conflict', message: 'upstream changes conflict with local commits' })
-        return
-      }
-      if (mergeResult === 'failed') {
-        this.finish('failed', { code: 'merge-failed', message: 'git merge exited without starting a merge; the working tree is unchanged' })
-        return
+
+      this.enterPhase('overlaying')
+      try {
+        await this.deps.git.restorePaths(this.deps.config.overlayRef, this.deps.config.overlayPaths, (line) => { this.recordLine(line) })
+      } catch (error) {
+        throw new SelfUpdateBusinessError({ code: 'overlay-failed', message: messageOf(error) })
       }
 
       try {
         await this.installBuildVerify()
-      } catch (installBuildError) {
+        this.enterPhase('committing')
+        try {
+          await this.deps.git.commitAll(
+            `self-update: overlay ${this.deps.config.overlayRef} onto ${remoteHead.sha.slice(0, 7)}`,
+            (line) => { this.recordLine(line) },
+          )
+        } catch (error) {
+          throw new SelfUpdateBusinessError({ code: 'commit-failed', message: messageOf(error) })
+        }
+      } catch (installBuildOrCommitError) {
         // The rollback's own failure is a distinct, more severe outcome than
-        // the install/build/verify failure that triggered it, so it must not
-        // reach the outer catch below and be reported as an ordinary `failed`
-        // job — it is handled here, at the only place that knows which of the
-        // two failures actually happened.
+        // the failure that triggered it, so it must not reach the outer catch
+        // below and be reported as an ordinary `failed` job — it is handled
+        // here, at the only place that knows which of the two actually happened.
         try {
           await this.rollback(preUpdateHead)
         } catch (rollbackError) {
           this.finish('rolled-back', toFailure(rollbackError))
           return
         }
-        this.finish('rolled-back', toFailure(installBuildError))
+        this.finish('rolled-back', toFailure(installBuildOrCommitError))
         return
       }
 
@@ -313,6 +317,9 @@ export class SelfUpdateJob {
   private async preflight(): Promise<void> {
     if (this.deps.appExit === undefined) throw new SelfUpdateBusinessError({ code: 'app-exit-unavailable' })
     if (await this.deps.git.isDirty()) throw new SelfUpdateBusinessError({ code: 'dirty-working-tree' })
+    if (!await this.deps.git.refExists(this.deps.config.overlayRef)) {
+      throw new SelfUpdateBusinessError({ code: 'overlay-ref-missing', ref: this.deps.config.overlayRef })
+    }
     const head = await this.deps.git.currentHead()
     this.transition({ fromCommit: head })
   }
@@ -378,5 +385,5 @@ function messageOf(error: unknown): string {
  */
 function toFailure(error: unknown): SelfUpdateFailure {
   if (error instanceof SelfUpdateBusinessError) return error.failure
-  return { code: 'merge-unrecoverable', message: messageOf(error) }
+  return { code: 'unexpected', message: messageOf(error) }
 }

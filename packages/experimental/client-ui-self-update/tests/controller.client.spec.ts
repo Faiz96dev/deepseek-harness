@@ -19,7 +19,6 @@ const STATUS: SelfUpdateStatusValue = {
   behind: null,
   ahead: 0,
   dirty: false,
-  activeSessions: 0,
   job: null,
   lastRun: null,
 }
@@ -168,15 +167,7 @@ describe('SelfUpdateController', () => {
 
     expect(await controller.start()).toEqual({ ok: true })
     expect(controller.getSnapshot().job).toEqual(JOB)
-    expect(start).toHaveBeenCalledWith({})
-    controller.dispose()
-  })
-
-  it('forwards the acknowledgeActiveSessions request', async () => {
-    const start = vi.fn(() => Promise.resolve(ok({ ok: true as const, value: JOB })))
-    const controller = new SelfUpdateController(fakeRemote({ start }))
-    await controller.start({ acknowledgeActiveSessions: true })
-    expect(start).toHaveBeenCalledWith({ acknowledgeActiveSessions: true })
+    expect(start).toHaveBeenCalledWith()
     controller.dispose()
   })
 
@@ -201,13 +192,13 @@ describe('SelfUpdateController', () => {
 
   it('clears an earlier refusal once a later start is accepted', async () => {
     const start = vi.fn()
-      .mockResolvedValueOnce(ok({ ok: false as const, error: { code: 'active-sessions-need-acknowledgement' as const, activeSessions: 1 } }))
+      .mockResolvedValueOnce(ok({ ok: false as const, error: { code: 'dirty-working-tree' as const } }))
       .mockResolvedValueOnce(ok({ ok: true as const, value: JOB }))
     const follow = vi.fn(neverEndingFollow())
     const controller = new SelfUpdateController(fakeRemote({ start, follow }))
     await controller.start()
-    expect(controller.getSnapshot().refusal).toBe('active-sessions-need-acknowledgement')
-    await controller.start({ acknowledgeActiveSessions: true })
+    expect(controller.getSnapshot().refusal).toBe('dirty-working-tree')
+    await controller.start()
     expect(controller.getSnapshot().refusal).toBeNull()
     expect(controller.getSnapshot().job).toEqual(JOB)
     controller.dispose()
@@ -322,7 +313,7 @@ describe('SelfUpdateController', () => {
     deliver({ type: 'baseline', status: { ...STATUS, job: JOB }, log: [] })
     await vi.waitFor(() => { expect(controller.getSnapshot().job).toEqual(JOB) })
 
-    const failed: SelfUpdateJobSnapshot = { ...JOB, finishedAt: 1, outcome: 'failed', failure: { code: 'merge-conflict', message: 'conflict' } }
+    const failed: SelfUpdateJobSnapshot = { ...JOB, finishedAt: 1, outcome: 'failed', failure: { code: 'overlay-failed', message: 'conflict' } }
     deliver({ type: 'done', job: failed })
     await vi.waitFor(() => { expect(controller.getSnapshot().job).toEqual(failed) })
     expect(controller.getSnapshot().restarting).toBe(false)

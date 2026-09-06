@@ -1,7 +1,8 @@
 /**
- * Host Remote service that fetches, merges, rebuilds, and restarts this
- * deployment from its configured upstream branch while leaving every
- * durable Session untouched. @module @deepseek-ai/dsh-experimental-self-update
+ * Host Remote service that fetches the configured upstream branch, resets
+ * this checkout onto it, restores this deployment's own overlay paths,
+ * rebuilds, and restarts — while leaving every durable Session untouched.
+ * @module @deepseek-ai/dsh-experimental-self-update
  */
 
 import { mkdirSync } from 'node:fs'
@@ -19,7 +20,6 @@ import type {
   SelfUpdateCommit,
   SelfUpdateFollowFrame,
   SelfUpdateJobSnapshot,
-  SelfUpdateStartRequest,
   SelfUpdateStartResult,
   SelfUpdateStatusValue,
 } from './types.ts'
@@ -113,7 +113,6 @@ export class SelfUpdateService extends TypertRemoteService {
       behind,
       ahead,
       dirty,
-      activeSessions: this.ctx.sessions.list().length,
       job: this.job?.snapshot ?? null,
       lastRun: this.lastRun ?? null,
     })
@@ -133,25 +132,21 @@ export class SelfUpdateService extends TypertRemoteService {
 
   /**
    * Begin one update attempt. Refuses synchronously when a job is already
-   * running, the working tree is dirty, no bounded exit request is
-   * available, or active Sessions exist and the caller has not acknowledged
-   * that an in-flight turn would be interrupted (recoverable on next open,
-   * per the Session repair contract, but disruptive to watch happen).
-   * @param request - optional acknowledgement of active Sessions.
+   * running, the working tree is dirty, or no bounded exit request is
+   * available. Any Sessions currently attached to a live fiber are flushed
+   * to disk first — an in-flight turn is interrupted, but recoverable on next
+   * open per the Session repair contract — so a start never waits on, or
+   * asks about, live Sessions.
    * @returns the started job's snapshot, or a stable business refusal.
    */
   @Remote('start')
-  async start(request: SelfUpdateStartRequest): Promise<SelfUpdateStartResult> {
+  async start(): Promise<SelfUpdateStartResult> {
     if (this.job !== undefined && !isTerminal(this.job.snapshot)) {
       return this.refuse({ code: 'job-already-running' as const })
     }
     const appExit = this.ctx.get('appExit')
     if (appExit === undefined) return this.refuse({ code: 'app-exit-unavailable' as const })
     if (await this.git.isDirty()) return this.refuse({ code: 'dirty-working-tree' as const })
-    const activeSessions = this.ctx.sessions.list().length
-    if (activeSessions > 0 && request.acknowledgeActiveSessions !== true) {
-      return this.refuse({ code: 'active-sessions-need-acknowledgement' as const, activeSessions })
-    }
 
     await Promise.all(this.ctx.sessions.list().map(session => this.ctx.sessions.flush(session)))
 

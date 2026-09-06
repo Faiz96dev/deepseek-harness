@@ -77,6 +77,8 @@ const SENTENCE_MODEL_EXPERIENCE: Readonly<Record<string, SentenceContract>> = {
   'packages/api/remotes': { kind: 'none', reason: 'The Remote BFF selects business methods and forwarded events; selected services own any model-visible effect.' },
   'packages/experimental/agent-team-web-profile': { kind: 'indirect', reason: 'The private Web layer delegates model composition to the Host-side Agent Teams profile.' },
   'packages/experimental/client-ui-agent-team': { kind: 'none', reason: 'The browser projection and task controls register no model-facing input.' },
+  'packages/experimental/client-ui-self-update': { kind: 'none', reason: 'The browser projection registers no model-facing input; updating the deployment is an operator action.' },
+  'packages/experimental/self-update-web-profile': { kind: 'none', reason: 'Neither row this bundle inserts registers a tool, prompt section, or Session event; the Host Remote service and its browser controls are entirely operator-facing.' },
   'packages/client/ui-layout': { kind: 'none', reason: 'Browser-side UI plugin layer; registers nothing model-facing.' },
   'packages/client/ui-sidebar': { kind: 'none', reason: 'Browser-side UI plugin layer; registers nothing model-facing.' },
   'packages/client/ui-brand-official': { kind: 'none', reason: 'Browser-side presentation occupants; registers nothing model-facing.' },

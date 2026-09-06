@@ -15,10 +15,12 @@ export type SelfUpdatePhase =
   | 'preflight'
   | 'fetching'
   | 'backing-up'
-  | 'merging'
+  | 'resetting'
+  | 'overlaying'
   | 'installing'
   | 'building'
   | 'verifying'
+  | 'committing'
   | 'restarting'
 
 /** Terminal outcomes a finished job settles into. */
@@ -39,12 +41,10 @@ export interface SelfUpdateStatusValue {
   readonly remoteHead: SelfUpdateCommit | null
   /** Commits local HEAD is missing from the fetched upstream head; `null` before the first `check`. */
   readonly behind: number | null
-  /** Commits upstream is missing from local HEAD (the fork's own commits). */
+  /** Commits upstream is missing from local HEAD (this deployment's own overlay commit, if any). */
   readonly ahead: number
   /** Whether the working tree currently carries uncommitted changes. */
   readonly dirty: boolean
-  /** Sessions currently attached to a live fiber; a proxy for work an update would interrupt. */
-  readonly activeSessions: number
   /** The in-progress job, or `null` when idle. */
   readonly job: SelfUpdateJobSnapshot | null
   /** The most recently finished job this process instance has observed. */
@@ -65,16 +65,17 @@ export type SelfUpdateFailure =
   | { readonly code: 'dirty-working-tree' }
   | { readonly code: 'job-already-running' }
   | { readonly code: 'app-exit-unavailable' }
-  | { readonly code: 'active-sessions-need-acknowledgement'; readonly activeSessions: number }
+  | { readonly code: 'overlay-ref-missing'; readonly ref: string }
   | { readonly code: 'fetch-failed'; readonly message: string }
   | { readonly code: 'backup-failed'; readonly message: string }
-  | { readonly code: 'merge-conflict'; readonly message: string }
-  | { readonly code: 'merge-failed'; readonly message: string }
+  | { readonly code: 'reset-failed'; readonly message: string }
+  | { readonly code: 'overlay-failed'; readonly message: string }
   | { readonly code: 'install-failed'; readonly exitCode: number | null; readonly message: string }
   | { readonly code: 'build-failed'; readonly exitCode: number | null; readonly message: string }
   | { readonly code: 'verify-failed'; readonly exitCode: number | null; readonly message: string }
+  | { readonly code: 'commit-failed'; readonly message: string }
   | { readonly code: 'rollback-failed'; readonly message: string }
-  | { readonly code: 'merge-unrecoverable'; readonly message: string }
+  | { readonly code: 'unexpected'; readonly message: string }
 
 /** One update job's current or final state. */
 export interface SelfUpdateJobSnapshot {
@@ -88,12 +89,6 @@ export interface SelfUpdateJobSnapshot {
   readonly fromCommit: SelfUpdateCommit | null
   readonly toCommit: SelfUpdateCommit | null
   readonly backupPath: string | null
-}
-
-/** Request to begin one update attempt. */
-export interface SelfUpdateStartRequest {
-  /** Explicit override proceeding despite `activeSessions > 0` at preflight. */
-  readonly acknowledgeActiveSessions?: boolean
 }
 
 /** Successful public operation result. */
@@ -111,10 +106,7 @@ export interface SelfUpdateRejected<E extends SelfUpdateFailure> {
 /** Result returned by the self-update `start` operation. */
 export type SelfUpdateStartResult =
   | SelfUpdateSuccess<SelfUpdateJobSnapshot>
-  | SelfUpdateRejected<
-    | Extract<SelfUpdateFailure, { code: 'job-already-running' | 'dirty-working-tree' | 'app-exit-unavailable' }>
-    | Extract<SelfUpdateFailure, { code: 'active-sessions-need-acknowledgement' }>
-  >
+  | SelfUpdateRejected<Extract<SelfUpdateFailure, { code: 'job-already-running' | 'dirty-working-tree' | 'app-exit-unavailable' }>>
 
 /** One frame of the `follow` logical stream: a full baseline, then increments. */
 export type SelfUpdateFollowFrame =

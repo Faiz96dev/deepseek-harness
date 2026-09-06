@@ -28,12 +28,20 @@ export interface RepoFixture {
 /** The `version` committed into every fixture repository's root `package.json`. */
 export const FIXTURE_VERSION = '1.2.3'
 
+/** The overlay ref name and the single path it carries, in every fixture repository. */
+export const FIXTURE_OVERLAY_REF = 'plugin'
+export const FIXTURE_OVERLAY_PATHS = ['plugins']
+
 /**
  * Build a local checkout (`repoRoot`) with a real `upstream` remote pointing
  * at a second, independent repository (`upstreamRoot`) — real git operating
  * on real temporary directories, no mocked subprocess. The initial commit
  * carries a root `package.json` declaring {@link FIXTURE_VERSION}, as the
- * service reads the deployment version from there.
+ * service reads the deployment version from there. `repoRoot` also carries a
+ * `plugin` branch (checked out from `master`, then abandoned) whose tree adds
+ * `plugins/marker.txt` — the overlay this fixture's jobs restore — while
+ * `master` itself (mirroring `upstream/master`) never has that path, exactly
+ * like a pristine checkout of the parent repository.
  */
 export async function createRepoFixture(): Promise<RepoFixture> {
   const base = await mkdtemp(join(tmpdir(), 'dsh-self-update-repo-'))
@@ -52,6 +60,13 @@ export async function createRepoFixture(): Promise<RepoFixture> {
 
   await git(base, ['clone', upstreamRoot, repoRoot])
   await git(repoRoot, ['remote', 'rename', 'origin', 'upstream'])
+
+  await git(repoRoot, ['checkout', '-b', FIXTURE_OVERLAY_REF])
+  await mkdir(join(repoRoot, 'plugins'), { recursive: true })
+  await writeFile(join(repoRoot, 'plugins', 'marker.txt'), 'plugin content\n', 'utf8')
+  await git(repoRoot, ['add', '.'])
+  await git(repoRoot, ['commit', '-m', 'plugin overlay'])
+  await git(repoRoot, ['checkout', 'master'])
 
   return {
     upstreamRoot,
@@ -100,6 +115,8 @@ export function testConfig(overrides: Partial<Config> & RequiredTestConfig): Con
   return {
     remoteName: 'upstream',
     branch: 'master',
+    overlayRef: FIXTURE_OVERLAY_REF,
+    overlayPaths: FIXTURE_OVERLAY_PATHS,
     installArgv: nodeScript('process.exit(0)'),
     buildArgv: nodeScript('process.exit(0)'),
     verifyArgv: nodeScript('process.exit(0)'),
