@@ -4,6 +4,7 @@
  * durable Session untouched. @module @deepseek-ai/dsh-experimental-self-update
  */
 
+import { mkdirSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -73,11 +74,14 @@ export class SelfUpdateService extends TypertRemoteService {
   private lastRemoteHead: SelfUpdateCommit | undefined
 
   /**
+   * Creates `config.logDir` so an uncreatable log directory fails the plugin
+   * at load rather than the first update attempt.
    * @param ctx - Host context carrying the subprocess and session capabilities.
    * @param config - validated deployment policy.
    */
   constructor(ctx: Context, private readonly config: SelfUpdateConfig) {
     super(ctx, 'selfUpdate')
+    mkdirSync(config.logDir, { recursive: true })
     this.git = new SelfUpdateGit(ctx, config)
   }
 
@@ -139,14 +143,14 @@ export class SelfUpdateService extends TypertRemoteService {
   @Remote('start')
   async start(request: SelfUpdateStartRequest): Promise<SelfUpdateStartResult> {
     if (this.job !== undefined && !isTerminal(this.job.snapshot)) {
-      return rejected({ code: 'job-already-running' as const })
+      return this.refuse({ code: 'job-already-running' as const })
     }
     const appExit = this.ctx.get('appExit')
-    if (appExit === undefined) return rejected({ code: 'app-exit-unavailable' as const })
-    if (await this.git.isDirty()) return rejected({ code: 'dirty-working-tree' as const })
+    if (appExit === undefined) return this.refuse({ code: 'app-exit-unavailable' as const })
+    if (await this.git.isDirty()) return this.refuse({ code: 'dirty-working-tree' as const })
     const activeSessions = this.ctx.sessions.list().length
     if (activeSessions > 0 && request.acknowledgeActiveSessions !== true) {
-      return rejected({ code: 'active-sessions-need-acknowledgement' as const, activeSessions })
+      return this.refuse({ code: 'active-sessions-need-acknowledgement' as const, activeSessions })
     }
 
     await Promise.all(this.ctx.sessions.list().map(session => this.ctx.sessions.flush(session)))
@@ -155,6 +159,12 @@ export class SelfUpdateService extends TypertRemoteService {
     this.job = job
     void this.trackCompletion(job)
     return success(job.snapshot)
+  }
+
+  /** Refuse one start request, leaving the reason in the Host log where a silent-looking click can be explained. */
+  private refuse(error: Extract<SelfUpdateStartResult, { ok: false }>['error']): SelfUpdateStartResult {
+    this.ctx.logger.warn(`self-update: start refused: ${JSON.stringify(error)}`)
+    return rejected(error)
   }
 
   private async trackCompletion(job: SelfUpdateJob): Promise<void> {

@@ -27,6 +27,9 @@ export interface SelfUpdateRemote {
 /** Load state of the status read that seeds the panel. */
 export type SelfUpdateLoadStatus = 'cold' | 'loading' | 'ready' | 'error'
 
+/** Business reasons the Host may refuse a `start`, as the panel names them. */
+export type SelfUpdateStartRefusal = Extract<SelfUpdateStartResult, { ok: false }>['error']['code']
+
 /** Immutable view published to the Update button and its panel. */
 export interface SelfUpdateView {
   status: SelfUpdateLoadStatus
@@ -35,7 +38,10 @@ export interface SelfUpdateView {
   log: readonly SelfUpdateLogLine[]
   /** Set once a `restarting` phase frame arrives, or the follow stream ends unexpectedly. */
   restarting: boolean
+  /** Transport or Host failure message from the last Remote call, or `null`. */
   error: string | null
+  /** Why the last `start` was refused; cleared by the next accepted `start` or status load. */
+  refusal: SelfUpdateStartRefusal | null
 }
 
 const INITIAL_VIEW: SelfUpdateView = Object.freeze({
@@ -45,6 +51,7 @@ const INITIAL_VIEW: SelfUpdateView = Object.freeze({
   log: [],
   restarting: false,
   error: null,
+  refusal: null,
 })
 
 /** Settled action shape rendered by the panel's Check/Update controls. */
@@ -124,9 +131,11 @@ export class SelfUpdateController implements HostObservable<SelfUpdateView> {
         this.openFollow()
         return OK
       }
-      return { ok: false, error: { code: carried.value.error.code, message: carried.value.error.code } }
+      const { code } = carried.value.error
+      this.publish({ ...this.view, refusal: code })
+      return { ok: false, error: { code, message: code } }
     }
-    this.publish({ ...this.view, job: carried.value.value })
+    this.publish({ ...this.view, job: carried.value.value, refusal: null })
     this.openFollow()
     return OK
   }
@@ -164,6 +173,7 @@ export class SelfUpdateController implements HostObservable<SelfUpdateView> {
         log: this.view.log,
         restarting: false,
         error: null,
+        refusal: null,
       })
       this.openFollow()
       return OK
@@ -188,7 +198,17 @@ export class SelfUpdateController implements HostObservable<SelfUpdateView> {
       // An aborted or dropped stream during a restart is expected; the
       // reconnect callback (wired by the client plugin) drives recovery.
     }
-    if (!this.disposed && this.followController?.signal === signal) {
+    if (this.disposed || this.followController?.signal !== signal) return
+    // The stream ending on its own is not restarting: a Host `follow()` with
+    // no job returns after one baseline frame, and an ordinary settlement
+    // (up-to-date/failed/rolled-back) always delivers its 'done' frame —
+    // which sets `finishedAt` — before the stream closes. A genuine restart
+    // is caught by the explicit 'phase':'restarting' frame in applyFrame,
+    // which runs first. Only a job still open (`finishedAt === null`) with no
+    // further frames arriving is a stream that ended without explanation —
+    // most plausibly the connection dropping mid-restart — so this is the
+    // sole remaining case worth guessing at.
+    if (this.view.job !== null && this.view.job.finishedAt === null) {
       this.publish({ ...this.view, restarting: true })
     }
   }
@@ -202,6 +222,7 @@ export class SelfUpdateController implements HostObservable<SelfUpdateView> {
         log: [...frame.log],
         restarting: false,
         error: null,
+        refusal: this.view.refusal,
       })
       return
     }

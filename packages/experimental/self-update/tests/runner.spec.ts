@@ -19,7 +19,7 @@ async function setup() {
   repo = await createRepoFixture()
   harness = await setupJobHarness()
   const config = testConfig({
-    repoRoot: repo.repoRoot, backupRoot: '', sessionsDir: '', storagesDir: '', attachmentsDir: '',
+    repoRoot: repo.repoRoot, backupRoot: '', sessionsDir: '', storagesDir: '', attachmentsDir: '', logDir: '',
   })
   return { repo, harness, config }
 }
@@ -102,7 +102,7 @@ describe('runStreaming', () => {
     repo = await createRepoFixture()
     harness = await setupJobHarness()
     const config = testConfig({
-      repoRoot: repo.repoRoot, backupRoot: '', sessionsDir: '', storagesDir: '', attachmentsDir: '', extraPathDirs: [nodeDir],
+      repoRoot: repo.repoRoot, backupRoot: '', sessionsDir: '', storagesDir: '', attachmentsDir: '', logDir: '', extraPathDirs: [nodeDir],
     })
     vi.stubEnv('PATH', undefined)
     try {

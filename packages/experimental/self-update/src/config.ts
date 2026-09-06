@@ -35,6 +35,8 @@ export interface Config {
   readonly graceMs: number
   /** Bounded per-job in-memory log line count; older lines are dropped once exceeded. */
   readonly maxLogLines: number
+  /** Directory receiving one append-only log file per job; created at load, so an uncreatable path fails the plugin. */
+  readonly logDir: string
 }
 
 export const Config: s<Config> = s.object({
@@ -52,4 +54,5 @@ export const Config: s<Config> = s.object({
   attachmentsDir: s.string().required(),
   graceMs: s.number().step(1).min(1).required(),
   maxLogLines: s.number().step(1).min(1).required(),
+  logDir: s.string().required(),
 })

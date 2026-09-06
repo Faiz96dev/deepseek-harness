@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -29,11 +29,26 @@ async function setup(): Promise<{ repo: RepoFixture; harness: JobTestHarness; gi
   backupBase = await mkdtemp(join(tmpdir(), 'dsh-self-update-job-'))
   await mkdir(join(backupBase, 'sessions'), { recursive: true })
   await mkdir(join(backupBase, 'storages'), { recursive: true })
+  // The service creates logDir at load; jobs constructed directly here need it in place.
+  await mkdir(join(backupBase, 'logs'), { recursive: true })
   return { repo, harness, git: new SelfUpdateGit(harness.ctx, testConfigFor(repo, backupBase)), backupBase }
 }
 
-function testConfigFor(fixture: RepoFixture, backupBase: string, extra: Parameters<typeof testConfig>[0] = { repoRoot: fixture.repoRoot, backupRoot: join(backupBase, 'backups'), sessionsDir: join(backupBase, 'sessions'), storagesDir: join(backupBase, 'storages'), attachmentsDir: join(backupBase, 'attachments') }) {
-  return testConfig(extra)
+type TestConfigInput = Parameters<typeof testConfig>[0]
+
+/** Complete config for one fixture; `logDir` defaults to the fixture's `logs` directory unless `extra` names one. */
+function testConfigFor(
+  fixture: RepoFixture,
+  backupBase: string,
+  extra: Omit<TestConfigInput, 'logDir'> & { logDir?: string } = {
+    repoRoot: fixture.repoRoot,
+    backupRoot: join(backupBase, 'backups'),
+    sessionsDir: join(backupBase, 'sessions'),
+    storagesDir: join(backupBase, 'storages'),
+    attachmentsDir: join(backupBase, 'attachments'),
+  },
+) {
+  return testConfig({ logDir: join(backupBase, 'logs'), ...extra })
 }
 
 async function drain(job: SelfUpdateJob): Promise<SelfUpdateFollowFrame[]> {
@@ -59,6 +74,56 @@ describe('SelfUpdateJob', () => {
     expect(appExit).not.toHaveBeenCalled()
     expect(frames.some(f => f.type === 'phase' && f.phase === 'backing-up')).toBe(false)
     expect(frames.some(f => f.type === 'phase' && f.phase === 'installing')).toBe(false)
+  })
+
+  it('appends every phase, subprocess line, and the outcome to its own durable log file', async () => {
+    const ctx = await setup()
+    await addUpstreamCommit(ctx.repo.upstreamRoot, 'second commit')
+    const appExit = vi.fn()
+    const config = testConfigFor(ctx.repo, ctx.backupBase, {
+      repoRoot: ctx.repo.repoRoot,
+      backupRoot: join(ctx.backupBase, 'backups'),
+      sessionsDir: join(ctx.backupBase, 'sessions'),
+      storagesDir: join(ctx.backupBase, 'storages'),
+      attachmentsDir: join(ctx.backupBase, 'attachments'),
+      logDir: join(ctx.backupBase, 'logs'),
+      buildArgv: nodeScript('console.log("building now"); process.exit(0)'),
+    })
+    await mkdir(config.logDir, { recursive: true })
+    const info = vi.spyOn(ctx.harness.ctx.logger, 'info')
+    const job = SelfUpdateJob.start({ ctx: ctx.harness.ctx, git: ctx.git, config, appExit })
+
+    await drain(job)
+    expect(job.logPath.startsWith(config.logDir)).toBe(true)
+    const text = await readFile(job.logPath, 'utf8')
+    expect(text).toContain(`job ${job.snapshot.id} started`)
+    expect(text).toMatch(/ phase fetching$/m)
+    expect(text).toMatch(/ phase restarting$/m)
+    expect(text).toMatch(/\[building\] \[stdout\] building now$/m)
+    expect(text).toMatch(/ outcome succeeded$/m)
+    expect(info).toHaveBeenCalledWith(expect.stringMatching(/self-update \[[0-9a-f]{8}\] phase merging/))
+  })
+
+  it('reports a lost log file once through the Host logger and still completes the job', async () => {
+    const ctx = await setup()
+    const appExit = vi.fn()
+    const config = testConfigFor(ctx.repo, ctx.backupBase, {
+      repoRoot: ctx.repo.repoRoot,
+      backupRoot: join(ctx.backupBase, 'backups'),
+      sessionsDir: join(ctx.backupBase, 'sessions'),
+      storagesDir: join(ctx.backupBase, 'storages'),
+      attachmentsDir: join(ctx.backupBase, 'attachments'),
+      // The service creates logDir at load; a directory removed afterwards
+      // is the runtime loss this exercises, so it is deliberately not created.
+      logDir: join(ctx.backupBase, 'missing', 'logs'),
+    })
+    const warn = vi.spyOn(ctx.harness.ctx.logger, 'warn')
+    const job = SelfUpdateJob.start({ ctx: ctx.harness.ctx, git: ctx.git, config, appExit })
+
+    await drain(job)
+    expect(job.snapshot.outcome).toBe('up-to-date')
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/log file .* unavailable.*ENOENT/))
   })
 
   it('fails preflight on a dirty working tree without touching git or appExit', async () => {

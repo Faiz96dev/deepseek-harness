@@ -45,6 +45,7 @@ Choose this service for a single-operator source-checkout deployment that should
 | `attachmentsDir` | Content-addressed attachment directory. |
 | `graceMs` | SIGTERM-to-SIGKILL escalation grace, in milliseconds, for every spawned child. |
 | `maxLogLines` | Bounded per-job in-memory log line count. |
+| `logDir` | Directory receiving one append-only log file per job; created at load, so an uncreatable path fails the plugin. |
 
 Every field is required: none of these are safe to default across deployments (a maintainer may use `npm` instead of `pnpm`, run a differently named remote, or place `$DSH_HOME` somewhere non-standard), so the schema accepts no implicit value. See [`dsh-experimental-self-update-web-profile`](../self-update-web-profile/README.md) for a worked configuration.
 
@@ -82,6 +83,10 @@ One `SelfUpdateJob` instance is the whole lifecycle controller for one attempt: 
 ### Subprocess execution
 
 Every `git`, install, build, and verify invocation goes through one shared streaming runner (`src/runner.ts`) built on `ctx.subprocess`: `resolveExecutable` looks up `argv[0]` in a PATH built from `config.extraPathDirs` plus the ambient PATH, then `spawn` starts the child with piped stdio, decoded into complete lines and forwarded to the job's log as they arrive. `GIT_TERMINAL_PROMPT=0` prevents a credential prompt from hanging a job indefinitely; `GIT_PAGER=cat`/`NO_COLOR=1` keep git's output plain-text. Every run awaits the process tree's exit (or termination) before returning, so a failed or aborted phase never leaks a running child.
+
+### Durable log
+
+The in-memory, bounded job log exists for the browser; the record of what an update did must outlive the process restart that ends a successful one. Every job therefore appends synchronously to its own file, `<logDir>/<start-time>-<job-id-prefix>.log`: a start note, every phase entry, every subprocess and system line as `<iso-time> [phase] [stream] text`, and the settled outcome with its failure object. Phase entries, outcomes, and every refused `start` (with its reason) are also written to the Host logger, so a process supervisor's log names why a click appeared to do nothing. A log-file write failure after load is reported once through the Host logger and never fails the update it describes.
 
 ### Preflight and merge safety
 

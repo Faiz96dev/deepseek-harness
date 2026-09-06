@@ -13,7 +13,7 @@ import * as WebProfileInvariant from '../src/invariant.ts'
 const REQUIRED_CONFIG_KEYS = [
   'repoRoot', 'remoteName', 'branch', 'installArgv', 'buildArgv', 'verifyArgv',
   'extraPathDirs', 'backupRoot', 'keepBackups', 'sessionsDir', 'storagesDir',
-  'attachmentsDir', 'graceMs', 'maxLogLines',
+  'attachmentsDir', 'graceMs', 'maxLogLines', 'logDir',
 ]
 
 describe('self-update Web profile bundle', () => {

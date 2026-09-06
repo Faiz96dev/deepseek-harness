@@ -28,7 +28,7 @@ describe('createBackup', () => {
     // attachmentsDir deliberately left absent.
 
     const config = testConfig({
-      repoRoot: '', backupRoot: join(root, 'backups'), sessionsDir, storagesDir, attachmentsDir, keepBackups: 5,
+      repoRoot: '', backupRoot: join(root, 'backups'), sessionsDir, storagesDir, attachmentsDir, logDir: '', keepBackups: 5,
     })
     const backupPath = await createBackup(config, commit)
 
@@ -45,7 +45,7 @@ describe('createBackup', () => {
     root = await mkdtemp(join(tmpdir(), 'dsh-self-update-backup-'))
     const backupRoot = join(root, 'backups')
     const config = testConfig({
-      repoRoot: '', backupRoot, sessionsDir: join(root, 'sessions'), storagesDir: join(root, 'storages'), attachmentsDir: join(root, 'attachments'), keepBackups: 2,
+      repoRoot: '', backupRoot, sessionsDir: join(root, 'sessions'), storagesDir: join(root, 'storages'), attachmentsDir: join(root, 'attachments'), logDir: '', keepBackups: 2,
     })
 
     const paths: string[] = []

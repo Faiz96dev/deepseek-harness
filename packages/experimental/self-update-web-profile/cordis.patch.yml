@@ -20,6 +20,7 @@
         attachmentsDir: /Users/faizmamutov/.dsh/attachments
         graceMs: 5000
         maxLogLines: 2000
+        logDir: /Users/faizmamutov/.dsh/self-update/logs
 
     - id: ui-self-update
       name: '@deepseek-ai/dsh-experimental-client-ui-self-update'

@@ -29,7 +29,7 @@ Install the package through [`@deepseek-ai/dsh-experimental-self-update-web-prof
 
 ### Check and apply an update
 
-The footer button shows a status dot: green when up to date, amber once a check finds commits behind upstream, and blue while a job is running. Opening the panel loads status and the current job (if any); its first line always names the checked-out release version and the short `HEAD` sha. "Check" fetches upstream and reports how far behind it the checkout is. "Update" asks for confirmation, then starts a job; if one or more Sessions are currently active, a warning explains that their in-flight turn will be interrupted (and transparently recovered on next open) and requires an explicit "Update anyway" before proceeding.
+The footer button shows a status dot: green when up to date, amber once a check finds commits behind upstream, and blue while a job is running. Opening the panel loads status and the current job (if any); its first line always names the checked-out release version and the short `HEAD` sha. "Check" fetches upstream and reports how far behind it the checkout is. "Update" re-reads status and asks for confirmation, then starts a job; if one or more Sessions are currently active, a warning explains that their in-flight turn will be interrupted (and transparently recovered on next open) and requires an explicit "Update anyway" before proceeding. A start the Host refuses (a dirty working tree, active Sessions without acknowledgement, no restart capability) is named in the panel, and a failed Remote call shows its message, so a click never appears to do nothing.
 
 ### Watch progress and recover after the restart
 

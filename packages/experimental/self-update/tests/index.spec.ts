@@ -1,6 +1,7 @@
-import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { Context } from '@deepseek-ai/cordis'
 import type { Config } from '../src/config.ts'
 import SelfUpdateService from '../src/index.ts'
 import {
@@ -41,6 +42,7 @@ async function setup(options: {
     sessionsDir: join(backupBase, 'sessions'),
     storagesDir: join(backupBase, 'storages'),
     attachmentsDir: join(backupBase, 'attachments'),
+    logDir: join(backupBase, 'logs'),
     ...options.configOverrides,
   })
   await harness.ctx.plugin(SelfUpdateService, config)
@@ -89,6 +91,36 @@ describe('SelfUpdateService.status', () => {
     const ctx = await setup()
     await writeFile(join(ctx.repo.repoRoot, 'package.json'), 'null\n', 'utf8')
     await expect(ctx.service.status()).rejects.toThrow(/must declare a non-empty string "version"/)
+  })
+})
+
+describe('SelfUpdateService.start logging', () => {
+  it('writes every refused start with its reason to the Host logger', async () => {
+    const ctx = await setup()
+    await makeDirty(ctx.repo.repoRoot)
+    const warn = vi.spyOn(ctx.harness.ctx.logger, 'warn')
+    await ctx.service.start({})
+    expect(warn).toHaveBeenCalledWith('self-update: start refused: {"code":"dirty-working-tree"}')
+  })
+})
+
+describe('SelfUpdateService load', () => {
+  it('creates logDir at load and fails loud when it cannot be created', async () => {
+    const ctx = await setup()
+    const backupBase = ctx.repo.repoRoot.replace(/\/repo$/, '')
+    expect((await stat(join(backupBase, 'logs'))).isDirectory()).toBe(true)
+
+    const blocker = join(backupBase, 'blocker')
+    await writeFile(blocker, 'a regular file where a directory is needed\n', 'utf8')
+    const config = testConfig({
+      repoRoot: ctx.repo.repoRoot,
+      backupRoot: join(backupBase, 'backups'),
+      sessionsDir: join(backupBase, 'sessions'),
+      storagesDir: join(backupBase, 'storages'),
+      attachmentsDir: join(backupBase, 'attachments'),
+      logDir: join(blocker, 'logs'),
+    })
+    expect(() => new SelfUpdateService(new Context(), config)).toThrow(/ENOTDIR|EEXIST/)
   })
 })
 
@@ -157,6 +189,8 @@ describe('SelfUpdateService.start', () => {
 
     await ctx.service.start({ acknowledgeActiveSessions: true })
     expect(flushed).toContain(session.id)
+    // Let the job settle before teardown removes the fixture it is still logging into.
+    await vi.waitFor(() => { expect(ctx.appExit).toHaveBeenCalled() })
   })
 
   it('records lastRun once the started job settles', async () => {

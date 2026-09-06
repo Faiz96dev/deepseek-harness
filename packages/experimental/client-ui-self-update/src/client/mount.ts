@@ -35,6 +35,7 @@ function registerUi(ctx: ClientContext): void {
   const injected: SelfUpdateInjected = {
     hooks: { update: controller },
     ensure: () => controller.ensure(),
+    refresh: () => controller.refresh(),
     check: () => controller.check(),
     start: request => controller.start(request),
     onReconnect: (listener) => {

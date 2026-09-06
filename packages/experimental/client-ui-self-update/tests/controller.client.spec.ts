@@ -187,7 +187,7 @@ describe('SelfUpdateController', () => {
     controller.dispose()
   })
 
-  it('surfaces an ordinary business refusal from start with its own code as the message', async () => {
+  it('surfaces an ordinary business refusal from start with its own code as the message and in the view', async () => {
     const start = vi.fn(() => Promise.resolve(ok({
       ok: false as const, error: { code: 'dirty-working-tree' as const },
     })))
@@ -195,6 +195,21 @@ describe('SelfUpdateController', () => {
     expect(await controller.start()).toEqual({
       ok: false, error: { code: 'dirty-working-tree', message: 'dirty-working-tree' },
     })
+    expect(controller.getSnapshot().refusal).toBe('dirty-working-tree')
+    controller.dispose()
+  })
+
+  it('clears an earlier refusal once a later start is accepted', async () => {
+    const start = vi.fn()
+      .mockResolvedValueOnce(ok({ ok: false as const, error: { code: 'active-sessions-need-acknowledgement' as const, activeSessions: 1 } }))
+      .mockResolvedValueOnce(ok({ ok: true as const, value: JOB }))
+    const follow = vi.fn(neverEndingFollow())
+    const controller = new SelfUpdateController(fakeRemote({ start, follow }))
+    await controller.start()
+    expect(controller.getSnapshot().refusal).toBe('active-sessions-need-acknowledgement')
+    await controller.start({ acknowledgeActiveSessions: true })
+    expect(controller.getSnapshot().refusal).toBeNull()
+    expect(controller.getSnapshot().job).toEqual(JOB)
     controller.dispose()
   })
 
@@ -290,20 +305,51 @@ describe('SelfUpdateController', () => {
     controller.dispose()
   })
 
-  it('marks restarting when the follow stream ends without a done frame', async () => {
+  it('does not mark restarting when the stream ends and no job has ever run', async () => {
     const controller = new SelfUpdateController(fakeRemote({
       follow: async function* endsImmediately() {},
     }))
     controller.openFollow()
+    await new Promise(resolve => setTimeout(resolve, 10))
+    expect(controller.getSnapshot().restarting).toBe(false)
+    controller.dispose()
+  })
+
+  it('does not mark restarting when the stream ends normally after an ordinary job failure', async () => {
+    const { follow, deliver } = deliverableFollow()
+    const controller = new SelfUpdateController(fakeRemote({ follow }))
+    controller.openFollow()
+    deliver({ type: 'baseline', status: { ...STATUS, job: JOB }, log: [] })
+    await vi.waitFor(() => { expect(controller.getSnapshot().job).toEqual(JOB) })
+
+    const failed: SelfUpdateJobSnapshot = { ...JOB, finishedAt: 1, outcome: 'failed', failure: { code: 'merge-conflict', message: 'conflict' } }
+    deliver({ type: 'done', job: failed })
+    await vi.waitFor(() => { expect(controller.getSnapshot().job).toEqual(failed) })
+    expect(controller.getSnapshot().restarting).toBe(false)
+    controller.dispose()
+  })
+
+  it('marks restarting when the stream drops with a job still open and no done frame ever arrived', async () => {
+    // The Remote connection vanishes mid-job — a baseline and one log line
+    // arrive, then the generator ends with no 'phase':'restarting' and no
+    // 'done' frame, leaving the job in view still unfinished.
+    async function* dropsMidJob() {
+      yield { type: 'baseline' as const, status: { ...STATUS, job: JOB }, log: [] }
+      yield { type: 'log' as const, line: { seq: 0, phase: 'building' as const, stream: 'stdout' as const, text: 'building', at: 0 } }
+    }
+    const controller = new SelfUpdateController(fakeRemote({ follow: dropsMidJob }))
+    controller.openFollow()
+    await vi.waitFor(() => { expect(controller.getSnapshot().log).toHaveLength(1) })
     await vi.waitFor(() => { expect(controller.getSnapshot().restarting).toBe(true) })
     controller.dispose()
   })
 
   it('does not mark restarting when a newer follow generation has already replaced this one', async () => {
-    const controller = new SelfUpdateController(fakeRemote({
-      follow: async function* endsImmediately() {},
-    }))
+    const { follow, deliver } = deliverableFollow()
+    const controller = new SelfUpdateController(fakeRemote({ follow }))
     controller.openFollow()
+    deliver({ type: 'baseline', status: { ...STATUS, job: JOB }, log: [] })
+    await vi.waitFor(() => { expect(controller.getSnapshot().job).toEqual(JOB) })
     controller.closeFollow()
     await new Promise(resolve => setTimeout(resolve, 10))
     expect(controller.getSnapshot().restarting).toBe(false)

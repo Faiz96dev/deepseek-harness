@@ -37,7 +37,7 @@ This activates this package's declared patch, mounting both the `self-update` Ho
 
 ### Before installing: edit `cordis.patch.yml` for this deployment
 
-Every field under the `self-update` row's `config` is an absolute, deployment-specific value: `repoRoot` (the git checkout this process runs from), `extraPathDirs` (directories a supervisor's minimal `PATH` is missing, most commonly wherever `pnpm` itself lives), `backupRoot`, `sessionsDir`, `storagesDir`, and `attachmentsDir` (this deployment's `$DSH_HOME` subdirectories). Copy `cordis.patch.yml` into a profile-level `--patch` overlay or edit it in place before installing on a different machine or checkout; see [`dsh-experimental-self-update`'s Configuration](../self-update/README.md#configuration) for every field's meaning.
+Every field under the `self-update` row's `config` is an absolute, deployment-specific value: `repoRoot` (the git checkout this process runs from), `extraPathDirs` (directories a supervisor's minimal `PATH` is missing, most commonly wherever `pnpm` itself lives), `backupRoot`, `logDir`, `sessionsDir`, `storagesDir`, and `attachmentsDir` (this deployment's `$DSH_HOME` subdirectories). Copy `cordis.patch.yml` into a profile-level `--patch` overlay or edit it in place before installing on a different machine or checkout; see [`dsh-experimental-self-update`'s Configuration](../self-update/README.md#configuration) for every field's meaning.
 
 ### What you get
 

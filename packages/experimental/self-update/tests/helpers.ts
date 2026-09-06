@@ -93,7 +93,7 @@ export function failWhileMarkerPresent(relativeMarkerPath: string): string[] {
 }
 
 /** The required-per-test fields `testConfig` cannot default. */
-type RequiredTestConfig = Pick<Config, 'repoRoot' | 'backupRoot' | 'sessionsDir' | 'storagesDir' | 'attachmentsDir'>
+type RequiredTestConfig = Pick<Config, 'repoRoot' | 'backupRoot' | 'sessionsDir' | 'storagesDir' | 'attachmentsDir' | 'logDir'>
 
 /** Complete self-update `Config` for one test, with sensible bounded defaults. */
 export function testConfig(overrides: Partial<Config> & RequiredTestConfig): Config {

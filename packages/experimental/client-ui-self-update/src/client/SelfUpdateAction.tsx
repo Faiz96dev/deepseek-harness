@@ -25,11 +25,13 @@ function isFailedOutcome(outcome: SelfUpdateJobSnapshot['outcome']): boolean {
  * @param props - runtime slot currency (`wide`), the injected business face, and the namespace translator.
  * @returns the trigger button and its popover panel.
  */
-export function SelfUpdateAction({ wide, useUpdate, ensure, check, start, onReconnect, t }: SelfUpdateActionProps) {
+export function SelfUpdateAction({ wide, useUpdate, ensure, refresh, check, start, onReconnect, t }: SelfUpdateActionProps) {
   const restarting = useUpdate(view => view.restarting)
   const repository = useUpdate(view => view.repository)
   const job = useUpdate(view => view.job)
   const log = useUpdate(view => view.log)
+  const error = useUpdate(view => view.error)
+  const refusal = useUpdate(view => view.refusal)
 
   const [open, setOpen] = useState(false)
   const [confirming, setConfirming] = useState(false)
@@ -106,12 +108,22 @@ export function SelfUpdateAction({ wide, useUpdate, ensure, check, start, onReco
                             </>
                           )
                           : (
-                            <button type="button" className={css.actionButtonPrimary} onClick={() => { setConfirming(true) }}>
+                            <button
+                              type="button"
+                              className={css.actionButtonPrimary}
+                              onClick={() => {
+                                // The active-Session warning below must reflect now, not panel-open time.
+                                void refresh()
+                                setConfirming(true)
+                              }}
+                            >
                               {t('update')}
                             </button>
                           )}
                       </div>
                     )}
+                  {refusal !== null ? <div className={css.failure}>{t(`failure.${refusal}`)}</div> : null}
+                  {error !== null ? <div className={css.failure}>{t('error', { message: error })}</div> : null}
                   {confirming && repository !== null && repository.activeSessions > 0
                     ? (
                       <div className={css.warning}>

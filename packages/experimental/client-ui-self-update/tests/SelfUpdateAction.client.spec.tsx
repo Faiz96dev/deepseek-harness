@@ -60,9 +60,11 @@ function mount(options: {
     log: [],
     restarting: false,
     error: null,
+    refusal: null,
     ...options.view,
   }
   const ensure = vi.fn(() => Promise.resolve<SelfUpdateActionResult>(options.ensureResult ?? { ok: true }))
+  const refresh = vi.fn(() => Promise.resolve<SelfUpdateActionResult>({ ok: true }))
   const check = vi.fn(() => Promise.resolve<SelfUpdateActionResult>(options.checkResult ?? { ok: true }))
   const start = vi.fn(() => Promise.resolve<SelfUpdateActionResult>(options.startResult ?? { ok: true }))
   const reconnectListeners = new Set<() => void>()
@@ -73,12 +75,13 @@ function mount(options: {
   const useUpdate = (<T,>(select: (v: SelfUpdateView) => T): T =>
     useSyncExternalStore(() => () => {}, () => select(view))) as never
   const props = {
-    wide: options.wide ?? true, useUpdate, ensure, check, start, onReconnect, t,
+    wide: options.wide ?? true, useUpdate, ensure, refresh, check, start, onReconnect, t,
   } as unknown as Parameters<typeof SelfUpdateAction>[0]
   const rendered = render(<SelfUpdateAction {...props} />)
   return {
     ...rendered,
     ensure,
+    refresh,
     check,
     start,
     fireReconnect: () => { for (const listener of reconnectListeners) listener() },
@@ -150,6 +153,8 @@ describe('SelfUpdateAction', () => {
     const ui = mount()
     fireEvent.click(ui.getByLabelText(zh.trigger))
     fireEvent.click(ui.panel().getByRole('button', { name: zh.update }))
+    // Entering confirmation re-reads status so the active-Session warning is current.
+    expect(ui.refresh).toHaveBeenCalledOnce()
     expect(ui.start).not.toHaveBeenCalled()
     fireEvent.click(ui.panel().getByRole('button', { name: zh.confirm }))
     expect(ui.start).toHaveBeenCalledWith({})
@@ -192,6 +197,18 @@ describe('SelfUpdateAction', () => {
     fireEvent.click(ui.getByLabelText(zh.trigger))
     expect(ui.getByText('fetching upstream')).toBeTruthy()
     expect(ui.getByText('a warning')).toBeTruthy()
+  })
+
+  it('names a refused start in the panel instead of appearing to do nothing', () => {
+    const ui = mount({ view: { refusal: 'active-sessions-need-acknowledgement' } })
+    fireEvent.click(ui.getByLabelText(zh.trigger))
+    expect(ui.getByText(zh['failure.active-sessions-need-acknowledgement'])).toBeTruthy()
+  })
+
+  it('shows a transport or Host error message in the panel', () => {
+    const ui = mount({ view: { status: 'error', error: 'status offline' } })
+    fireEvent.click(ui.getByLabelText(zh.trigger))
+    expect(ui.getByText('请求失败：status offline')).toBeTruthy()
   })
 
   it('shows the failure line once a job settles with a failure', () => {

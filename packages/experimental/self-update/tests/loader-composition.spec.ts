@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -88,6 +88,7 @@ describe('self-update through a real Loader composition', () => {
       `    attachmentsDir: ${JSON.stringify(join(configRoot, 'attachments'))}`,
       '    graceMs: 2000',
       '    maxLogLines: 500',
+      `    logDir: ${JSON.stringify(join(configRoot, 'self-update-logs'))}`,
       '',
     ].join('\n'))
 
@@ -116,5 +117,9 @@ describe('self-update through a real Loader composition', () => {
     expect(frames).toContain('merging')
     expect(frames).toContain('restarting')
     expect(exitCode).toBe(0)
+    // The service created logDir at load and the job left its durable record there.
+    const logFiles = await readdir(join(configRoot, 'self-update-logs'))
+    expect(logFiles).toHaveLength(1)
+    expect(logFiles[0]).toMatch(/\.log$/)
   })
 })

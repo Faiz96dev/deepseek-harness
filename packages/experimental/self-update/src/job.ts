@@ -10,6 +10,8 @@ import type { AppExit } from '@deepseek-ai/dsh-cmdline'
 import { createBackup } from './backup.ts'
 import type { Config } from './config.ts'
 import type { SelfUpdateGit } from './git.ts'
+import { openJobLogFile } from './log.ts'
+import type { JobLogFile } from './log.ts'
 import { runStreaming } from './runner.ts'
 import type {
   SelfUpdateCommit,
@@ -103,13 +105,17 @@ export class SelfUpdateJob {
   private snapshotValue: SelfUpdateJobSnapshot
   private readonly log: SelfUpdateLogLine[] = []
   private readonly followers = new Set<JobFollower>()
+  private readonly file: JobLogFile
+  private readonly tag: string
   private runPromise!: Promise<void>
 
   private constructor(private readonly deps: SelfUpdateJobDeps) {
+    const id = randomUUID() as SelfUpdateJobId
+    const startedAt = Date.now()
     this.snapshotValue = Object.freeze({
-      id: randomUUID() as SelfUpdateJobId,
+      id,
       phase: 'preflight',
-      startedAt: Date.now(),
+      startedAt,
       finishedAt: null,
       outcome: null,
       failure: null,
@@ -117,6 +123,17 @@ export class SelfUpdateJob {
       toCommit: null,
       backupPath: null,
     })
+    this.tag = `self-update [${id.slice(0, 8)}]`
+    this.file = openJobLogFile(deps.config.logDir, id, startedAt, (error) => {
+      deps.ctx.logger.warn(`${this.tag} log file ${this.file.path} unavailable, further lines are not written: ${error.message}`)
+    })
+    this.file.note(`job ${id} started`)
+    deps.ctx.logger.info(`${this.tag} started; log file ${this.file.path}`)
+  }
+
+  /** Absolute path of this job's durable log file. */
+  get logPath(): string {
+    return this.file.path
   }
 
   /** Current job state; replaced, never mutated, on every transition. */
@@ -179,12 +196,15 @@ export class SelfUpdateJob {
   private enterPhase(phase: SelfUpdatePhase): void {
     this.transition({ phase })
     this.publish({ type: 'phase', phase })
+    this.file.note(`phase ${phase}`)
+    this.deps.ctx.logger.info(`${this.tag} phase ${phase}`)
   }
 
   private recordLine(line: SelfUpdateLogLine): void {
     this.log.push(line)
     if (this.log.length > this.deps.config.maxLogLines) this.log.shift()
     this.publish({ type: 'log', line })
+    this.file.line(line)
   }
 
   private systemLine(phase: SelfUpdatePhase, text: string): void {
@@ -195,6 +215,18 @@ export class SelfUpdateJob {
     this.transition({ finishedAt: Date.now(), outcome, failure })
     this.publish({ type: 'done', job: this.snapshotValue })
     for (const follower of this.followers) follower.close()
+    this.recordOutcome()
+  }
+
+  /** Write the settled outcome to the log file and the Host logger. */
+  private recordOutcome(): void {
+    const { outcome, failure } = this.snapshotValue
+    const summary = failure === null
+      ? `outcome ${String(outcome)}`
+      : `outcome ${String(outcome)} failure ${JSON.stringify(failure)}`
+    this.file.note(summary)
+    if (failure === null) this.deps.ctx.logger.info(`${this.tag} ${summary}`)
+    else this.deps.ctx.logger.warn(`${this.tag} ${summary}`)
   }
 
   private async run(): Promise<void> {
@@ -326,6 +358,8 @@ export class SelfUpdateJob {
     this.transition({ finishedAt: Date.now(), outcome: 'succeeded', failure: null })
     this.publish({ type: 'done', job: this.snapshotValue })
     for (const follower of this.followers) follower.close()
+    // Synchronous, so the outcome is on disk before the exit request below.
+    this.recordOutcome()
     // Yield one microtask so the 'restarting' phase and 'done' frames reach
     // every open stream before the process exits.
     queueMicrotask(() => { exit(0) })

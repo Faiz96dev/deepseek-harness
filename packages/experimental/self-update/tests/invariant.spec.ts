@@ -39,6 +39,7 @@ async function setupHarness(): Promise<Context> {
   await created.plugin(SelfUpdateService, testConfig({
     repoRoot: repo.repoRoot,
     backupRoot: join(root, 'backups'),
+    logDir: join(root, 'logs'),
     sessionsDir: join(root, 'sessions'),
     storagesDir: join(root, 'storages'),
     attachmentsDir: join(root, 'attachments'),

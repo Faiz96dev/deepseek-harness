@@ -24,6 +24,8 @@ export interface SelfUpdateInjected {
   }
   /** Load status once, on first interaction, and open the live follow stream. */
   ensure: () => Promise<SelfUpdateActionResult>
+  /** Re-read status now, so a confirmation step sees the current active-Session count rather than the one loaded when the panel opened. */
+  refresh: () => Promise<SelfUpdateActionResult>
   /** Fetch upstream, then refresh status against it. */
   check: () => Promise<SelfUpdateActionResult>
   /**

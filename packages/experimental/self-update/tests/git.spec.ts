@@ -28,7 +28,7 @@ describe('SelfUpdateGit against a real repository', () => {
     repo = await createRepoFixture()
     harness = await setupJobHarness()
     const config = testConfig({
-      repoRoot: repo.repoRoot, backupRoot: '', sessionsDir: '', storagesDir: '', attachmentsDir: '',
+      repoRoot: repo.repoRoot, backupRoot: '', sessionsDir: '', storagesDir: '', attachmentsDir: '', logDir: '',
     })
     const gitOps = new SelfUpdateGit(harness.ctx, config)
 
@@ -41,7 +41,7 @@ describe('SelfUpdateGit against a real repository', () => {
     repo = await createRepoFixture()
     harness = await setupJobHarness()
     const config = testConfig({
-      repoRoot: repo.repoRoot, backupRoot: '', sessionsDir: '', storagesDir: '', attachmentsDir: '',
+      repoRoot: repo.repoRoot, backupRoot: '', sessionsDir: '', storagesDir: '', attachmentsDir: '', logDir: '',
     })
     const gitOps = new SelfUpdateGit(harness.ctx, config)
 
@@ -54,7 +54,7 @@ describe('SelfUpdateGit against a real repository', () => {
     repo = await createRepoFixture()
     harness = await setupJobHarness()
     const config = testConfig({
-      repoRoot: repo.repoRoot, backupRoot: '', sessionsDir: '', storagesDir: '', attachmentsDir: '',
+      repoRoot: repo.repoRoot, backupRoot: '', sessionsDir: '', storagesDir: '', attachmentsDir: '', logDir: '',
     })
     const gitOps = new SelfUpdateGit(harness.ctx, config)
 
@@ -71,7 +71,7 @@ describe('SelfUpdateGit against a real repository', () => {
     repo = await createRepoFixture()
     harness = await setupJobHarness()
     const config = testConfig({
-      repoRoot: repo.repoRoot, backupRoot: '', sessionsDir: '', storagesDir: '', attachmentsDir: '',
+      repoRoot: repo.repoRoot, backupRoot: '', sessionsDir: '', storagesDir: '', attachmentsDir: '', logDir: '',
     })
     const gitOps = new SelfUpdateGit(harness.ctx, config)
 
@@ -88,7 +88,7 @@ describe('SelfUpdateGit against a real repository', () => {
     repo = await createRepoFixture()
     harness = await setupJobHarness()
     const config = testConfig({
-      repoRoot: repo.repoRoot, backupRoot: '', sessionsDir: '', storagesDir: '', attachmentsDir: '',
+      repoRoot: repo.repoRoot, backupRoot: '', sessionsDir: '', storagesDir: '', attachmentsDir: '', logDir: '',
     })
     const gitOps = new SelfUpdateGit(harness.ctx, config)
 
@@ -115,7 +115,7 @@ describe('SelfUpdateGit against a real repository', () => {
     repo = await createRepoFixture()
     harness = await setupJobHarness()
     const config = testConfig({
-      repoRoot: repo.repoRoot, backupRoot: '', sessionsDir: '', storagesDir: '', attachmentsDir: '',
+      repoRoot: repo.repoRoot, backupRoot: '', sessionsDir: '', storagesDir: '', attachmentsDir: '', logDir: '',
     })
     const gitOps = new SelfUpdateGit(harness.ctx, config)
 
@@ -151,7 +151,7 @@ describe('SelfUpdateGit against a real repository', () => {
     repo = await createRepoFixture()
     harness = await setupJobHarness()
     const config = testConfig({
-      repoRoot: repo.repoRoot, backupRoot: '', sessionsDir: '', storagesDir: '', attachmentsDir: '',
+      repoRoot: repo.repoRoot, backupRoot: '', sessionsDir: '', storagesDir: '', attachmentsDir: '', logDir: '',
     })
     const gitOps = new SelfUpdateGit(harness.ctx, config)
 
@@ -170,7 +170,7 @@ describe('SelfUpdateGit against a real repository', () => {
     repo = await createRepoFixture()
     harness = await setupJobHarness()
     const config = testConfig({
-      repoRoot: repo.repoRoot, backupRoot: '', sessionsDir: '', storagesDir: '', attachmentsDir: '', branch: 'no-such-branch',
+      repoRoot: repo.repoRoot, backupRoot: '', sessionsDir: '', storagesDir: '', attachmentsDir: '', logDir: '', branch: 'no-such-branch',
     })
     const gitOps = new SelfUpdateGit(harness.ctx, config)
 
@@ -182,7 +182,7 @@ describe('SelfUpdateGit against a real repository', () => {
     repo = await createRepoFixture()
     harness = await setupJobHarness()
     const config = testConfig({
-      repoRoot: repo.repoRoot, backupRoot: '', sessionsDir: '', storagesDir: '', attachmentsDir: '', branch: 'no-such-branch',
+      repoRoot: repo.repoRoot, backupRoot: '', sessionsDir: '', storagesDir: '', attachmentsDir: '', logDir: '', branch: 'no-such-branch',
     })
     const gitOps = new SelfUpdateGit(harness.ctx, config)
 
@@ -193,7 +193,7 @@ describe('SelfUpdateGit against a real repository', () => {
     repo = await createRepoFixture()
     harness = await setupJobHarness()
     const config = testConfig({
-      repoRoot: repo.repoRoot, backupRoot: '', sessionsDir: '', storagesDir: '', attachmentsDir: '', branch: 'no-such-branch',
+      repoRoot: repo.repoRoot, backupRoot: '', sessionsDir: '', storagesDir: '', attachmentsDir: '', logDir: '', branch: 'no-such-branch',
     })
     const gitOps = new SelfUpdateGit(harness.ctx, config)
     // No fetch happened, so `git merge --no-edit upstream/no-such-branch`
@@ -209,7 +209,7 @@ describe('SelfUpdateGit against a real repository', () => {
     repo = await createRepoFixture()
     harness = await setupJobHarness()
     const config = testConfig({
-      repoRoot: repo.repoRoot, backupRoot: '', sessionsDir: '', storagesDir: '', attachmentsDir: '',
+      repoRoot: repo.repoRoot, backupRoot: '', sessionsDir: '', storagesDir: '', attachmentsDir: '', logDir: '',
     })
     const gitOps = new SelfUpdateGit(harness.ctx, config)
     const { onLine } = collectingSink()

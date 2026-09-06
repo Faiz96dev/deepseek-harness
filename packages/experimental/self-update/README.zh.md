@@ -45,6 +45,7 @@ kind: "package-reference"
 | `attachmentsDir` | 内容寻址的附件目录。 |
 | `graceMs` | 每个 spawn 出的子进程从 SIGTERM 升级到 SIGKILL 的宽限期，单位毫秒。 |
 | `maxLogLines` | 每个任务的有界内存日志行数。 |
+| `logDir` | 每个任务一个追加写日志文件的目录；在加载时创建，因此无法创建的路径会让插件加载失败。 |
 
 每个字段都是必填的：这些字段没有一个能安全地跨部署给出默认值（维护者可能用 `npm` 而不是 `pnpm`、运行一个命名不同的 remote，或把 `$DSH_HOME` 放在非标准位置），因此 schema 不接受隐式值。已配置好的示例见 [`dsh-experimental-self-update-web-profile`](../self-update-web-profile/README.zh.md)。
 
@@ -82,6 +83,10 @@ kind: "package-reference"
 ### 子进程执行
 
 每次 `git`、install、build 与 verify 调用都经过一个建立在 `ctx.subprocess` 之上的共享流式运行器（`src/runner.ts`）：`resolveExecutable` 在由 `config.extraPathDirs` 加环境 PATH 构成的 PATH 中查找 `argv[0]`，然后 `spawn` 以管道 stdio 启动子进程，将输出解码为完整的行并随到达转发到任务日志。`GIT_TERMINAL_PROMPT=0` 防止凭据提示无限期挂起一个任务；`GIT_PAGER=cat`/`NO_COLOR=1` 让 git 的输出保持纯文本。每次运行都会在返回前等待进程树退出（或终止），因此失败或中止的阶段绝不会泄漏正在运行的子进程。
+
+### 持久日志
+
+有界的内存任务日志是为浏览器而存在的；而一次更新做了什么的记录，必须活过结束一次成功更新的那个进程重启。因此每个任务都同步追加写入自己的文件 `<logDir>/<start-time>-<job-id-prefix>.log`：一条开始记录、每次进入阶段、每一行子进程与 system 输出（格式为 `<iso-time> [phase] [stream] text`），以及带失败对象的最终结果。进入阶段、结果以及每一次被拒绝的 `start`（附带原因）也会写入 Host logger，因此进程 supervisor 的日志能说明为什么一次点击看起来什么都没做。加载之后的日志文件写入失败只通过 Host logger 报告一次，绝不会让它所描述的更新失败。
 
 ### Preflight 与 merge 安全
 

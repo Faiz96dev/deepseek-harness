@@ -37,7 +37,7 @@ pnpm dsh plugin --profile web add ./packages/experimental/self-update-web-profil
 
 ### 安装前：为本次部署编辑 `cordis.patch.yml`
 
-`self-update` 行 `config` 下的每个字段都是绝对的、部署特定的值：`repoRoot`（本进程运行所在的 git checkout）、`extraPathDirs`（supervisor 精简 `PATH` 中缺失的目录，最常见的是 `pnpm` 自身所在的位置）、`backupRoot`、`sessionsDir`、`storagesDir` 与 `attachmentsDir`（本部署的 `$DSH_HOME` 子目录）。在不同机器或 checkout 上安装前，把 `cordis.patch.yml` 复制进 profile 级的 `--patch` overlay，或就地编辑它；每个字段的含义见 [`dsh-experimental-self-update` 的配置](../self-update/README.zh.md#configuration)。
+`self-update` 行 `config` 下的每个字段都是绝对的、部署特定的值：`repoRoot`（本进程运行所在的 git checkout）、`extraPathDirs`（supervisor 精简 `PATH` 中缺失的目录，最常见的是 `pnpm` 自身所在的位置）、`backupRoot`、`logDir`、`sessionsDir`、`storagesDir` 与 `attachmentsDir`（本部署的 `$DSH_HOME` 子目录）。在不同机器或 checkout 上安装前，把 `cordis.patch.yml` 复制进 profile 级的 `--patch` overlay，或就地编辑它；每个字段的含义见 [`dsh-experimental-self-update` 的配置](../self-update/README.zh.md#configuration)。
 
 ### 获得的功能
 
